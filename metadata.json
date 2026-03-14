@@ -1,0 +1,5 @@
+{
+  "name": "Poisson-Kelly Portfolio Architect",
+  "description": "An investment-grade Poisson-Kelly model for stock decision making and portfolio analysis, featuring jump-diffusion parameterization and optimal leverage calculation.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,3377 @@
+ScamScore Platform - Project Code Summary
+Generated on: 2026-03-06 08:21:52
+========================================
+
+Project Folder Structure
+========================
+
+poisson-kelly-portfolio-architect copy/
+    .env.example
+    .gitignore
+    README.md
+    index.html
+    metadata.json
+    package.json
+    server.ts
+    summarize_project.py
+    tsconfig.json
+    vite.config.ts
+    src/
+        App.tsx
+        index.css
+        main.tsx
+        utils/
+            macroEconomics.ts
+            poissonKelly.ts
+            portfolioOptimizer.ts
+            statistics.ts
+        components/
+            AssetInputPanel.tsx
+            ConvictionCard.tsx
+            InputPanel.tsx
+            KellyCurveChart.tsx
+            MacroInputPanel.tsx
+            SimulationChart.tsx
+            SummaryMetrics.tsx
+
+
+File Contents
+========================
+
+
+===== FILE: .env.example =====
+
+# GEMINI_API_KEY: Required for Gemini AI API calls.
+# AI Studio automatically injects this at runtime from user secrets.
+# Users configure this via the Secrets panel in the AI Studio UI.
+GEMINI_API_KEY="MY_GEMINI_API_KEY"
+
+# APP_URL: The URL where this applet is hosted.
+# AI Studio automatically injects this at runtime with the Cloud Run service URL.
+# Used for self-referential links, OAuth callbacks, and API endpoints.
+APP_URL="MY_APP_URL"
+
+
+===== FILE: .gitignore =====
+
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+
+===== FILE: README.md =====
+
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
+
+# Poisson-Kelly Portfolio Architect
+
+A sophisticated multi-asset jump diffusion model tool designed to optimize portfolio allocation and growth using the Kelly Criterion.
+
+## ✨ Features
+
+- **Kelly Criterion Growth Optimization**: Determines the optimal leverage and asset allocation fractions to maximize geometric growth.
+- **Multi-Asset Portfolio Builder & Optimization**: Calculates the optimal portfolio composition by factoring in Expected Return (Mu), Volatility (Sigma), covariance, and beta.
+- **Live Market Data**: Integrates with the `yahoo-finance2` API for live fetching of historical prices, target prices, analyst estimates, and SPY correlations.
+- **Jump Risk Assessment**: Calibrates for market crashes (lambda, jump mean, jump volatility) and evaluates tail risk.
+- **Macro-Economic Toggles**: Dynamic adjustments for inflation and Federal Funds Rates, instantly updating the underlying model assumptions.
+- **Risk Mitigation**: Includes Conditional Value at Risk (CVaR) limits and precise fraction-scaling down for portfolio safety.
+
+## 🛠 Tech Stack
+
+- **Frontend**: React, Vite, Tailwind CSS, Recharts, Framer Motion, Lucide React
+- **Backend**: Express, `simple-statistics`, `yahoo-finance2`
+
+## 🚀 Run Locally
+
+**Prerequisites:**  Node.js
+
+1. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+2. **Set Environment Variables**:
+   Update the `.env.local` file to include your API keys if required.
+3. **Run the app**:
+   ```bash
+   npm run dev
+   ```
+   The backend server will start on port `3000` alongside Vite. Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+
+
+===== FILE: index.html =====
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Google AI Studio App</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+
+
+===== FILE: metadata.json =====
+
+{
+  "name": "Poisson-Kelly Portfolio Architect",
+  "description": "An investment-grade Poisson-Kelly model for stock decision making and portfolio analysis, featuring jump-diffusion parameterization and optimal leverage calculation.",
+  "requestFramePermissions": []
+}
+
+
+===== FILE: package.json =====
+
+{
+  "name": "react-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^1.29.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "better-sqlite3": "^12.4.1",
+    "clsx": "^2.1.1",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^3.7.0",
+    "simple-statistics": "^7.8.8",
+    "tailwind-merge": "^3.5.0",
+    "vite": "^6.2.0",
+    "yahoo-finance2": "^3.13.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "autoprefixer": "^10.4.21",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
+
+
+===== FILE: server.ts =====
+
+
+import express from 'express';
+import { createServer as createViteServer } from 'vite';
+import YahooFinanceClass from 'yahoo-finance2';
+const yahooFinance = new YahooFinanceClass();
+import * as ss from 'simple-statistics';
+import { calculateArithmeticDrift, calculateLedoitWolfCovariance, mleJumpDiffusion } from './src/utils/statistics';
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+
+  app.use(express.json());
+
+  // API Route: Get Market Data
+  app.get('/api/market-data', async (req, res) => {
+    const ticker = req.query.ticker as string;
+    if (!ticker) return res.status(400).json({ error: 'Ticker is required' });
+
+    try {
+      // 1. Fetch Historical Data (for Risk & Beta)
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setFullYear(endDate.getFullYear() - 5);
+
+      const historical: any = await yahooFinance.historical(ticker, {
+        period1: startDate.toISOString().split('T')[0],
+        period2: endDate.toISOString().split('T')[0],
+        interval: '1d' as const
+      });
+
+      if (!historical || historical.length < 252) {
+        return res.status(404).json({ error: 'Insufficient historical data found' });
+      }
+
+      const logReturns: number[] = [];
+      for (let i = 1; i < historical.length; i++) {
+        const prev = historical[i - 1].adjClose || historical[i - 1].close;
+        const curr = historical[i].adjClose || historical[i].close;
+        if (prev && curr) logReturns.push(Math.log(curr / prev));
+      }
+
+      // 2. Calculate Volatility (Risk)
+      const stdDailyReturn = ss.standardDeviation(logReturns);
+      const sigma = stdDailyReturn * Math.sqrt(252);
+
+      // 3. Jump Calibration using MLE (Constrained to Crashes)
+      const { lambda, jumpMean, jumpVol } = mleJumpDiffusion(logReturns);
+
+      // 4. Fetch Live Quote (For Analyst Targets & Beta)
+      const quote: any = await yahooFinance.quote(ticker);
+
+      let riskFree = 0.04;
+      try {
+        const irxQuote: any = await yahooFinance.quote('^IRX');
+        if (irxQuote && irxQuote.regularMarketPrice) riskFree = irxQuote.regularMarketPrice / 100;
+      } catch (e) { console.warn('Failed to fetch ^IRX'); }
+
+      // NEW: Fetch Deep Summary Data for Target Price and Beta
+      let targetPrice = null;
+      let beta = 1.0;
+      try {
+        const summary = await yahooFinance.quoteSummary(ticker, {
+          // Added defaultKeyStatistics for ETFs
+          modules: ['financialData', 'summaryDetail', 'defaultKeyStatistics']
+        });
+        targetPrice = summary.financialData?.targetMeanPrice || null;
+        beta = (summary.summaryDetail?.beta || summary.financialData?.beta || summary.defaultKeyStatistics?.beta3Year || 1.0) as number;
+      } catch (e) {
+        console.warn(`Failed to fetch deep summary for ${ticker}`);
+      }
+
+      // 5. HYBRID EXPECTED RETURN (μ) LOGIC
+      let mu = 0;
+      let returnMethod = "";
+
+      const currentPrice = quote.regularMarketPrice;
+
+      if (currentPrice && targetPrice && targetPrice > 0) {
+        // Option A: Live Analyst 12-Month Target
+        mu = (targetPrice - currentPrice) / currentPrice;
+        returnMethod = "Analyst Target";
+      } else {
+        // Option B: Historical Drift Rollback
+        const { mu: historicalMu } = calculateArithmeticDrift(logReturns);
+        mu = historicalMu;
+        returnMethod = `Trailing 5Yr Drift`;
+      }
+
+      res.json({
+        ticker: ticker.toUpperCase(),
+        mu,
+        sigma,
+        lambda,
+        jumpMean,
+        jumpVol,
+        riskFree,
+        returnMethod, // Useful for debugging
+        dataPoints: logReturns.length,
+        jumpsDetected: Math.round(lambda * (logReturns.length / 252))
+      });
+
+    } catch (error) {
+      console.error('Error fetching market data:', error);
+      res.status(500).json({ error: 'Failed to fetch market data' });
+    }
+  });
+
+  // API Route: Get Portfolio Data (Covariance Matrix)
+  app.post('/api/portfolio-data', async (req, res) => {
+    const { tickers } = req.body; // Expecting { tickers: string[] }
+
+    if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
+      return res.status(400).json({ error: 'Tickers array is required' });
+    }
+
+    try {
+      // 1. Fetch Historical Data for all tickers + SPY
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setFullYear(endDate.getFullYear() - 5); // 5 years of data
+
+      const queryOptions = {
+        period1: startDate.toISOString().split('T')[0],
+        period2: endDate.toISOString().split('T')[0],
+        interval: '1d' as const
+      };
+
+      const tickersWithSpy = [...tickers];
+      if (!tickersWithSpy.includes('SPY')) {
+        tickersWithSpy.push('SPY');
+      }
+
+      const historicalDataPromises = tickersWithSpy.map(async ticker => {
+        try {
+          const data = await yahooFinance.historical(ticker, queryOptions);
+          return { ticker, data };
+        } catch (e) {
+          return { ticker, data: null };
+        }
+      });
+
+      const results = await Promise.all(historicalDataPromises);
+
+      // Filter out failed fetches
+      const validResults = results.filter(item => item.data && item.data.length > 0);
+
+      // We must have all requested tickers. SPY is also highly desired.
+      const validTickers = validResults.map(r => r.ticker);
+      const missingTickers = tickers.filter(t => !validTickers.includes(t));
+
+      if (missingTickers.length > 0) {
+        return res.status(400).json({ error: `Failed to fetch data for: ${missingTickers.join(', ')}` });
+      }
+
+      // 2. Align Data by Date
+      const priceMap = new Map<string, { [ticker: string]: number }>();
+
+      validResults.forEach(({ ticker, data }) => {
+        data.forEach((day: any) => {
+          const dateStr = day.date.toISOString().split('T')[0];
+          const close = day.adjClose || day.close;
+          if (close) {
+            if (!priceMap.has(dateStr)) {
+              priceMap.set(dateStr, {});
+            }
+            priceMap.get(dateStr)![ticker] = close;
+          }
+        });
+      });
+
+      // Filter dates where we have data for ALL valid tickers
+      const sortedDates = Array.from(priceMap.keys()).sort();
+      const alignedPrices: { [ticker: string]: number }[] = [];
+
+      sortedDates.forEach(date => {
+        const prices = priceMap.get(date)!;
+        if (Object.keys(prices).length === validTickers.length) {
+          alignedPrices.push(prices);
+        }
+      });
+
+      if (alignedPrices.length < 252) {
+        return res.status(400).json({ error: 'Insufficient overlapping historical data' });
+      }
+
+      // 3. Calculate Daily Log Returns
+      const returnsMatrix: number[][] = tickers.map(() => []);
+      const spyReturns: number[] = [];
+
+      for (let i = 1; i < alignedPrices.length; i++) {
+        const prev = alignedPrices[i - 1];
+        const curr = alignedPrices[i];
+
+        tickers.forEach((t, idx) => {
+          const r = Math.log(curr[t] / prev[t]);
+          returnsMatrix[idx].push(r);
+        });
+
+        if (validTickers.includes('SPY')) {
+          spyReturns.push(Math.log(curr['SPY'] / prev['SPY']));
+        }
+      }
+
+      // 4. Calculate Covariance Matrix using Ledoit-Wolf Shrinkage
+      const covMatrix = calculateLedoitWolfCovariance(returnsMatrix);
+
+      // 5. Calculate Beta to SPY and SPY Mu
+      const assetBetas: number[] = [];
+      let spyMu = 0.10; // Default fallback
+
+      if (spyReturns.length > 0) {
+        const { mu: calculatedSpyMu } = calculateArithmeticDrift(spyReturns);
+        spyMu = calculatedSpyMu;
+
+        const spyVar = ss.variance(spyReturns);
+
+        tickers.forEach((t, idx) => {
+          const assetRet = returnsMatrix[idx];
+          const cov = ss.sampleCovariance(assetRet, spyReturns);
+          const beta = cov / spyVar;
+          assetBetas.push(beta);
+        });
+      } else {
+        tickers.forEach(() => assetBetas.push(1.0)); // Fallback beta
+      }
+
+      res.json({
+        tickers,
+        covarianceMatrix: covMatrix,
+        assetBetas,
+        spyMu,
+        dataPoints: returnsMatrix[0].length
+      });
+
+    } catch (error) {
+      console.error('Error calculating portfolio data:', error);
+      res.status(500).json({ error: 'Internal server error', details: String(error) });
+    }
+  });
+
+  // API Route: Get Forward-Looking Jump Risk (Options Volatility Skew)
+  app.get('/api/options-data', async (req, res) => {
+    const ticker = req.query.ticker as string;
+    if (!ticker) return res.status(400).json({ error: 'Ticker is required' });
+
+    try {
+      // 1. Get current price
+      const quote: any = await yahooFinance.quote(ticker);
+      const currentPrice = quote.regularMarketPrice;
+
+      if (!currentPrice) {
+        return res.status(404).json({ error: 'Could not fetch current price' });
+      }
+
+      // 2. Fetch options chain
+      const optionsInfo = await yahooFinance.options(ticker);
+
+      if (!optionsInfo || !optionsInfo.expirationDates || optionsInfo.expirationDates.length === 0) {
+        return res.status(404).json({ error: 'No options data available for this ticker' });
+      }
+
+      // 3. Find target expiration date (~30-60 days out is ideal for skew)
+      const now = new Date();
+      let targetDate = optionsInfo.expirationDates[0]; // Default to closest
+
+      for (const date of optionsInfo.expirationDates) {
+        const daysToExpiry = (date.getTime() - now.getTime()) / (1000 * 3600 * 24);
+        if (daysToExpiry >= 30) {
+          targetDate = date;
+          break; // First one that is at least 30 days out
+        }
+      }
+
+      // 4. Fetch the specific chain for that date
+      const chain = await yahooFinance.options(ticker, { date: targetDate });
+      const calls = chain.options[0].calls;
+      const puts = chain.options[0].puts;
+
+      if (!calls.length || !puts.length) {
+        return res.status(404).json({ error: 'Incomplete options chain' });
+      }
+
+      // 5. Find At-The-Money (ATM) Volatility
+      // Closest call strike to current price
+      let atmCall = calls[0];
+      let minDiff = Math.abs(atmCall.strike - currentPrice);
+      for (const call of calls) {
+        const diff = Math.abs(call.strike - currentPrice);
+        if (diff < minDiff) {
+          minDiff = diff;
+          atmCall = call;
+        }
+      }
+
+      const atmVol = atmCall.impliedVolatility || 0;
+
+      // 6. Find 10% Out-Of-The-Money (OTM) Put Volatility
+      const targetPutStrike = currentPrice * 0.90; // 10% OTM
+      let otmPut = puts[0];
+      let minPutDiff = Math.abs(otmPut.strike - targetPutStrike);
+      for (const put of puts) {
+        const diff = Math.abs(put.strike - targetPutStrike);
+        if (diff < minPutDiff) {
+          minPutDiff = diff;
+          otmPut = put;
+        }
+      }
+
+      const otmVol = otmPut.impliedVolatility || 0;
+
+      // 7. Derive Jump Parameters from actual market data
+
+      // Sample OTM put strikes at 5% intervals from 5% to 30% OTM
+      const otmLevels = [0.95, 0.90, 0.85, 0.80, 0.75, 0.70];
+      const samples: { logMoneyness: number; weight: number }[] = [];
+
+      for (const level of otmLevels) {
+        const targetStrike = currentPrice * level;
+        let bestPut = puts[0];
+        let bestDiff = Math.abs(bestPut.strike - targetStrike);
+        for (const p of puts) {
+          const d = Math.abs(p.strike - targetStrike);
+          if (d < bestDiff) {
+            bestDiff = d;
+            bestPut = p;
+          }
+        }
+        const iv = bestPut.impliedVolatility || 0;
+        const excessIV = Math.max(0, iv - atmVol);
+        if (excessIV > 0) {
+          samples.push({
+            logMoneyness: Math.log(bestPut.strike / currentPrice),
+            weight: excessIV
+          });
+        }
+      }
+
+      // λ (Jump Intensity): total implied crash demand = sum of excess IV across all sampled OTM puts
+      const skew = otmVol - atmVol;
+      let impliedLambda = 0;
+      if (skew > 0) {
+        impliedLambda = Math.min(5.0, skew * 10);
+      }
+
+      // μ_J (Jump Mean): IV-excess-weighted average log-moneyness across OTM put surface
+      // High-vol stocks like TSLA with deep OTM IV concentration → deeper implied crash
+      // Stable stocks like WM → shallow implied crash concentrated near ATM
+      let impliedJumpMean = Math.log(otmPut.strike / currentPrice); // Fallback to 10% OTM
+      if (samples.length >= 1) {
+        const totalWeight = samples.reduce((s, x) => s + x.weight, 0);
+        impliedJumpMean = samples.reduce((s, x) => s + x.weight * x.logMoneyness, 0) / totalWeight;
+      }
+
+      // σ_J (Jump Volatility): dispersion of the crash severity distribution
+      // Wide spread of IV-weighted log-moneyness → uncertain crash extent
+      let impliedJumpVol = 0.05; // Fallback
+      if (samples.length >= 2) {
+        const totalWeight = samples.reduce((s, x) => s + x.weight, 0);
+        const weightedMean = samples.reduce((s, x) => s + x.weight * x.logMoneyness, 0) / totalWeight;
+        const weightedVar = samples.reduce((s, x) => s + x.weight * Math.pow(x.logMoneyness - weightedMean, 2), 0) / totalWeight;
+        impliedJumpVol = Math.min(1.0, Math.max(0.02, Math.sqrt(weightedVar)));
+      }
+
+      res.json({
+        ticker: ticker.toUpperCase(),
+        currentPrice,
+        expirationDate: targetDate,
+        atmStrike: atmCall.strike,
+        atmVolatility: atmVol,
+        otmPutStrike: otmPut.strike,
+        otmPutVolatility: otmVol,
+        volatilitySkew: skew,
+        impliedLambda: parseFloat(impliedLambda.toFixed(4)),
+        impliedJumpMean: parseFloat(impliedJumpMean.toFixed(4)),
+        impliedJumpVol: parseFloat(impliedJumpVol.toFixed(4))
+      });
+
+    } catch (error) {
+      console.error(`Error fetching options data for ${ticker}:`, error);
+      res.status(500).json({ error: 'Failed to process options data' });
+    }
+  });
+
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();
+
+
+===== FILE: summarize_project.py =====
+
+# summarize_project.py
+import os
+import datetime
+
+# --- Configuration ---
+# The name of the output file.
+OUTPUT_FILENAME = "project_summary.txt"
+
+# Directories to completely ignore.
+IGNORE_DIRS = {
+    "__pycache__",
+    ".git",
+    "node_modules",
+    "venv",
+    ".venv",
+    "dist",
+    "build"
+}
+
+# Files to ignore by name or extension.
+IGNORE_FILES = {
+    ".DS_Store",
+    "package-lock.json",
+    ".env",
+    ".ico",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".svg",
+    OUTPUT_FILENAME
+}
+
+# --- Main Script Logic ---
+
+def generate_structure_tree(root_dir, file_handle):
+    """Walks through the directory and writes a visual tree structure."""
+    file_handle.write("Project Folder Structure\n")
+    file_handle.write("========================\n\n")
+
+    for root, dirs, files in os.walk(root_dir, topdown=True):
+        # Filter out ignored directories
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+
+        level = root.replace(root_dir, '').count(os.sep)
+        indent = ' ' * 4 * (level)
+        file_handle.write(f"{indent}{os.path.basename(root)}/\n")
+        
+        sub_indent = ' ' * 4 * (level + 1)
+        for f in sorted(files):
+            if f not in IGNORE_FILES:
+                file_handle.write(f"{sub_indent}{f}\n")
+
+def concatenate_file_contents(root_dir, file_handle):
+    """Walks through the directory and appends the content of each relevant file."""
+    file_handle.write("\n\nFile Contents\n")
+    file_handle.write("========================\n")
+
+    for root, dirs, files in os.walk(root_dir, topdown=True):
+        # Filter out ignored directories
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+
+        for f in sorted(files):
+            if f in IGNORE_FILES:
+                continue
+
+            file_path = os.path.join(root, f)
+            relative_path = os.path.relpath(file_path, root_dir)
+
+            file_handle.write("\n\n" + "="*5 + f" FILE: {relative_path} " + "="*5 + "\n\n")
+
+            try:
+                with open(file_path, 'r', encoding='utf-8') as code_file:
+                    file_handle.write(code_file.read())
+            except Exception as e:
+                file_handle.write(f"[Could not read file: {e}]")
+
+
+def main():
+    """Main function to generate the project summary."""
+    project_root = os.getcwd()
+    print(f"Starting project summary generation in: {project_root}")
+    
+    with open(OUTPUT_FILENAME, 'w', encoding='utf-8') as summary_file:
+        # Write the header
+        summary_file.write("ScamScore Platform - Project Code Summary\n")
+        summary_file.write(f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        summary_file.write("="*40 + "\n\n")
+
+        # Generate the structure tree
+        generate_structure_tree(project_root, summary_file)
+
+        # Concatenate all file contents
+        concatenate_file_contents(project_root, summary_file)
+
+    print(f"\nSuccessfully created '{OUTPUT_FILENAME}'.")
+    print("Please provide the contents of this file for the final code review.")
+
+if __name__ == "__main__":
+    main()
+
+===== FILE: tsconfig.json =====
+
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "module": "ESNext",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "allowJs": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  }
+}
+
+
+===== FILE: vite.config.ts =====
+
+import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+import {defineConfig, loadEnv} from 'vite';
+
+export default defineConfig(({mode}) => {
+  const env = loadEnv(mode, '.', '');
+  return {
+    plugins: [react(), tailwindcss()],
+    define: {
+      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+    },
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, '.'),
+      },
+    },
+    server: {
+      // HMR is disabled in AI Studio via DISABLE_HMR env var.
+      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
+      hmr: process.env.DISABLE_HMR !== 'true',
+    },
+  };
+});
+
+
+===== FILE: src/App.tsx =====
+
+
+import React, { useState, useEffect } from 'react';
+import { ModelParams, SimulationResult, runSimulation, calculateGrowthRate } from './utils/poissonKelly';
+import { MacroParams, DEFAULT_MACRO, adjustParamsWithMacro } from './utils/macroEconomics';
+import { Asset, optimizePortfolio } from './utils/portfolioOptimizer';
+import InputPanel from './components/InputPanel';
+import MacroInputPanel from './components/MacroInputPanel';
+import AssetInputPanel from './components/AssetInputPanel';
+import SummaryMetrics from './components/SummaryMetrics';
+import SimulationChart from './components/SimulationChart';
+import KellyCurveChart from './components/KellyCurveChart';
+import ConvictionCard from './components/ConvictionCard';
+import { Play, RotateCcw, Activity, Settings2, Globe, Briefcase, CheckCircle, AlertTriangle, XCircle } from 'lucide-react';
+
+const DEFAULT_PARAMS: ModelParams = {
+  mu: 0.10,          // 10% expected return
+  sigma: 0.20,       // 20% volatility
+  riskFree: 0.04,    // 4% risk-free rate
+  lambda: 0.5,       // 0.5 jumps per year (1 every 2 years)
+  jumpMean: -0.20,   // -20% average jump size
+  jumpVol: 0.10,     // 10% volatility in jump size
+  horizon: 3,        // 3 years
+  initialWealth: 67000,
+  simulations: 9990,  // 9990 simulations
+  maxLeverage: 1.0,  // Default to no leverage (cash only)
+  maxAssetWeight: 0.30, // Default to a 30% max position size cap to force diversification
+  kellyFraction: 0.5, // Default to Half-Kelly for Estimation Risk mitigation
+  frictionCost: 0.001, // 0.1% friction
+  maxDrawdown: 0.25  // 25% max drawdown
+};
+
+const DEFAULT_ASSETS: Asset[] = [
+  // Benchmarks
+  { id: '1', ticker: 'SPY', mu: 0.14, sigma: 0.16, lambda: 0.5, jumpMean: -0.20, jumpVol: 0.10 },
+  { id: '2', ticker: 'QQQ', mu: 0.15, sigma: 0.22, lambda: 0.5, jumpMean: -0.25, jumpVol: 0.15 },
+  { id: '3', ticker: 'TLT', mu: 0.04, sigma: 0.12, lambda: 0.1, jumpMean: -0.05, jumpVol: 0.05 },
+
+  // Mega-Cap Tech
+  { id: 't1', ticker: 'GOOGL', mu: 0.20, sigma: 0.28, lambda: 1.0, jumpMean: -0.10, jumpVol: 0.10 },
+  { id: 't2', ticker: 'META', mu: 0.28, sigma: 0.35, lambda: 1.2, jumpMean: -0.12, jumpVol: 0.12 },
+  { id: 't3', ticker: 'AMZN', mu: 0.18, sigma: 0.30, lambda: 1.0, jumpMean: -0.10, jumpVol: 0.10 },
+  { id: 't4', ticker: 'MSFT', mu: 0.15, sigma: 0.25, lambda: 0.8, jumpMean: -0.08, jumpVol: 0.09 },
+  { id: 't40', ticker: 'AAPL', mu: 0.12, sigma: 0.24, lambda: 0.8, jumpMean: -0.08, jumpVol: 0.08 },
+  { id: 't18', ticker: 'NFLX', mu: 0.22, sigma: 0.38, lambda: 1.5, jumpMean: -0.12, jumpVol: 0.14 },
+
+  // Semiconductors
+  { id: 't10', ticker: 'NVDA', mu: 0.35, sigma: 0.50, lambda: 2.0, jumpMean: -0.15, jumpVol: 0.18 },
+  { id: 't9', ticker: 'AMD', mu: 0.25, sigma: 0.50, lambda: 1.8, jumpMean: -0.14, jumpVol: 0.16 },
+  { id: 't5', ticker: 'ASML', mu: 0.18, sigma: 0.38, lambda: 1.2, jumpMean: -0.12, jumpVol: 0.13 },
+  { id: 't6', ticker: 'AMAT', mu: 0.20, sigma: 0.40, lambda: 1.5, jumpMean: -0.13, jumpVol: 0.14 },
+  { id: 't8', ticker: 'TSM', mu: 0.20, sigma: 0.35, lambda: 1.2, jumpMean: -0.12, jumpVol: 0.12 },
+  { id: 't7', ticker: 'INTC', mu: 0.05, sigma: 0.38, lambda: 1.5, jumpMean: -0.14, jumpVol: 0.15 },
+  { id: 't11', ticker: 'AVGO', mu: 0.22, sigma: 0.38, lambda: 1.2, jumpMean: -0.12, jumpVol: 0.13 },
+  { id: 't12', ticker: 'ARM', mu: 0.30, sigma: 0.55, lambda: 2.0, jumpMean: -0.15, jumpVol: 0.18 },
+  { id: 't14', ticker: 'NXPI', mu: 0.15, sigma: 0.35, lambda: 1.2, jumpMean: -0.11, jumpVol: 0.12 },
+  { id: 't32', ticker: 'MPWR', mu: 0.20, sigma: 0.40, lambda: 1.5, jumpMean: -0.13, jumpVol: 0.14 },
+
+  // Speculative / High-Vol
+  { id: 't13', ticker: 'TSLA', mu: 0.25, sigma: 0.60, lambda: 2.5, jumpMean: -0.18, jumpVol: 0.20 },
+  { id: 't34', ticker: 'IONQ', mu: 0.30, sigma: 0.90, lambda: 3.5, jumpMean: -0.20, jumpVol: 0.25 },
+  { id: 't37', ticker: 'JOBY', mu: 0.15, sigma: 0.80, lambda: 3.0, jumpMean: -0.20, jumpVol: 0.25 },
+  { id: 't15', ticker: 'POET', mu: 0.20, sigma: 0.85, lambda: 3.5, jumpMean: -0.22, jumpVol: 0.28 },
+  { id: 't19', ticker: 'NBIS', mu: 0.25, sigma: 0.70, lambda: 3.0, jumpMean: -0.18, jumpVol: 0.22 },
+  { id: 't16', ticker: 'KWEB', mu: 0.15, sigma: 0.45, lambda: 2.0, jumpMean: -0.15, jumpVol: 0.18 },
+
+  // Healthcare & Biotech
+  { id: 't23', ticker: 'UNH', mu: 0.12, sigma: 0.28, lambda: 1.0, jumpMean: -0.10, jumpVol: 0.10 },
+  { id: 't24', ticker: 'NVO', mu: 0.18, sigma: 0.35, lambda: 1.5, jumpMean: -0.12, jumpVol: 0.14 },
+  { id: 't25', ticker: 'QURE', mu: 0.15, sigma: 0.90, lambda: 4.0, jumpMean: -0.25, jumpVol: 0.30 },
+  { id: 't26', ticker: 'SRPT', mu: 0.12, sigma: 0.75, lambda: 3.5, jumpMean: -0.22, jumpVol: 0.28 },
+  { id: 't27', ticker: 'DXCM', mu: 0.15, sigma: 0.45, lambda: 2.0, jumpMean: -0.15, jumpVol: 0.16 },
+
+  // Enterprise Tech & Fintech
+  { id: 't20', ticker: 'ADBE', mu: 0.15, sigma: 0.38, lambda: 1.5, jumpMean: -0.13, jumpVol: 0.14 },
+  { id: 't21', ticker: 'CRM', mu: 0.18, sigma: 0.35, lambda: 1.2, jumpMean: -0.12, jumpVol: 0.13 },
+  { id: 't41', ticker: 'PANW', mu: 0.22, sigma: 0.38, lambda: 1.5, jumpMean: -0.12, jumpVol: 0.14 },
+  { id: 't17', ticker: 'UBER', mu: 0.20, sigma: 0.40, lambda: 1.5, jumpMean: -0.13, jumpVol: 0.14 },
+  { id: 't36', ticker: 'PYPL', mu: 0.12, sigma: 0.40, lambda: 1.5, jumpMean: -0.14, jumpVol: 0.15 },
+
+  // Industrials, Energy & Consumer
+  { id: 't29', ticker: 'GEV', mu: 0.25, sigma: 0.50, lambda: 2.0, jumpMean: -0.14, jumpVol: 0.16 },
+  { id: 't31', ticker: 'ETN', mu: 0.15, sigma: 0.30, lambda: 1.0, jumpMean: -0.10, jumpVol: 0.11 },
+  { id: 't33', ticker: 'VST', mu: 0.22, sigma: 0.45, lambda: 2.0, jumpMean: -0.14, jumpVol: 0.16 },
+  { id: 't30', ticker: 'ALB', mu: 0.10, sigma: 0.50, lambda: 2.0, jumpMean: -0.16, jumpVol: 0.18 },
+  { id: 't35', ticker: 'UPS', mu: 0.08, sigma: 0.30, lambda: 1.0, jumpMean: -0.10, jumpVol: 0.10 },
+  { id: 't38', ticker: 'WM', mu: 0.10, sigma: 0.22, lambda: 0.8, jumpMean: -0.08, jumpVol: 0.09 },
+  { id: 't28', ticker: 'LULU', mu: 0.15, sigma: 0.38, lambda: 1.5, jumpMean: -0.12, jumpVol: 0.14 },
+  { id: 't39', ticker: 'CMG', mu: 0.15, sigma: 0.35, lambda: 1.2, jumpMean: -0.11, jumpVol: 0.12 },
+];
+
+export default function App() {
+  const [params, setParams] = useState<ModelParams>(DEFAULT_PARAMS);
+  const [macroParams, setMacroParams] = useState<MacroParams>(DEFAULT_MACRO);
+  const [assets, setAssets] = useState<Asset[]>(DEFAULT_ASSETS);
+  const [correlation, setCorrelation] = useState(0.5);
+  const [result, setResult] = useState<SimulationResult | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [activeTab, setActiveTab] = useState<'model' | 'macro' | 'portfolio'>('model');
+  const [adjustments, setAdjustments] = useState<string[]>([]);
+  const [portfolioWeights, setPortfolioWeights] = useState<Asset[]>([]);
+  const [benchmarkGrowth, setBenchmarkGrowth] = useState<number | null>(null);
+  const [decision, setDecision] = useState<'STRONG GO' | 'SCALED GO' | 'NO-GO' | null>(null);
+  const [decisionReason, setDecisionReason] = useState<string>('');
+  const [alpha, setAlpha] = useState<number | null>(null);
+  const [beta, setBeta] = useState<number | null>(null);
+  const [finalLambda, setFinalLambda] = useState<number | null>(null);
+  const [covarianceMatrix, setCovarianceMatrix] = useState<number[][] | null>(null);
+
+  const handleRun = async () => {
+    setIsRunning(true);
+    setResult(null);
+    setAdjustments([]);
+    setBenchmarkGrowth(null);
+    setDecision(null);
+    setDecisionReason('');
+    setAlpha(null);
+    setBeta(null);
+    setFinalLambda(null);
+
+    // Fetch SPY Benchmark Data
+    let spyGrowthRate = 0;
+    try {
+      const res = await fetch('/api/market-data?ticker=SPY');
+      const data = await res.json();
+
+      if (data.mu && data.sigma) {
+        const spyParams: ModelParams = {
+          ...params,
+          mu: data.mu,
+          sigma: data.sigma,
+          lambda: data.lambda || params.lambda,
+          jumpMean: data.jumpMean || params.jumpMean,
+          jumpVol: data.jumpVol || params.jumpVol,
+          frictionCost: 0
+        };
+        spyGrowthRate = calculateGrowthRate(1.0, spyParams);
+        setBenchmarkGrowth(spyGrowthRate);
+      }
+    } catch (e) {
+      console.error("Failed to fetch SPY benchmark", e);
+      const fallbackSpyParams: ModelParams = { ...params, mu: 0.10, sigma: 0.15, frictionCost: 0 };
+      spyGrowthRate = calculateGrowthRate(1.0, fallbackSpyParams);
+      setBenchmarkGrowth(spyGrowthRate);
+    }
+
+    // Fetch Portfolio Covariance
+    let covMatrix: number[][] | undefined = undefined;
+    let assetBetas: number[] = [];
+    let spyMu = 0.10;
+
+    if (assets.length > 1) {
+      try {
+        const tickers = assets.map(a => a.ticker);
+        const res = await fetch('/api/portfolio-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tickers })
+        });
+        const data = await res.json();
+        if (data.covarianceMatrix) {
+          covMatrix = data.covarianceMatrix;
+          assetBetas = data.assetBetas || [];
+          spyMu = data.spyMu || 0.10;
+        }
+      } catch (e) {
+        console.error("Failed to fetch covariance matrix", e);
+      }
+    }
+
+    // Save to state for the UI Heatmap
+    setCovarianceMatrix(covMatrix || null);
+
+    setTimeout(() => {
+      let finalParams = { ...params };
+      let currentExplanations: string[] = [];
+
+      // 1. Portfolio Optimization
+      let optimalWeights: number[] = [];
+      let baseMu = params.mu;
+      let baseSigma = params.sigma;
+
+      // FIX: Check if we have assets to optimize, regardless of which tab is active
+      const isMultiAsset = assets.length > 0;
+
+      if (isMultiAsset) {
+        // Apply Friction Cost
+        const assetsWithFriction = assets.map(a => ({
+          ...a,
+          mu: Math.max(params.riskFree, a.mu - params.frictionCost)
+        }));
+
+        const { weights, portMu, portSigma } = optimizePortfolio(
+          assetsWithFriction,
+          correlation,
+          covMatrix,
+          params.maxAssetWeight,
+          macroParams.isStressTest
+        );
+
+        optimalWeights = weights;
+        baseMu = portMu;
+        baseSigma = portSigma;
+
+        finalParams.mu = portMu;
+        finalParams.sigma = portSigma;
+
+        // Calculate Weighted Average Jump Parameters
+        let weightedLambda = 0;
+        let weightedJumpMean = 0;
+        let weightedJumpVol = 0;
+        let totalStockWeight = 0;
+
+        weights.forEach((w, i) => {
+          if (w > 0.001) {
+            const asset = assets[i];
+            const aLambda = asset.lambda !== undefined ? asset.lambda : params.lambda;
+            const aJumpMean = asset.jumpMean !== undefined ? asset.jumpMean : params.jumpMean;
+            const aJumpVol = asset.jumpVol !== undefined ? asset.jumpVol : params.jumpVol;
+
+            weightedLambda += w * aLambda;
+            weightedJumpMean += w * aJumpMean;
+            weightedJumpVol += w * aJumpVol;
+            totalStockWeight += w;
+          }
+        });
+
+        if (totalStockWeight > 0.001) {
+          finalParams.lambda = weightedLambda / totalStockWeight;
+          finalParams.jumpMean = weightedJumpMean / totalStockWeight;
+          finalParams.jumpVol = weightedJumpVol / totalStockWeight;
+          currentExplanations.push(`Jump parameters aggregated from optimal portfolio weights.`);
+        }
+
+        currentExplanations.push(`Portfolio optimized (Max Growth). Friction: ${(params.frictionCost * 100).toFixed(2)}%.`);
+      } else {
+        setPortfolioWeights([]);
+      }
+
+      // 2. Apply Macro Adjustments
+      const { adjusted, explanations } = adjustParamsWithMacro(finalParams, macroParams);
+
+      // 3. Find True Optimal Leverage (Jump-Adjusted)
+      const tempParams = { ...adjusted, maxLeverage: 10.0 };
+      const initialRes = runSimulation(tempParams);
+      const trueOptimalF = initialRes.optimalFraction;
+
+      // 4. Apply Kelly Fraction
+      let targetF = Math.min(trueOptimalF * params.kellyFraction, params.maxLeverage);
+
+      // 5. Precision Binary Search for CVaR Limiting
+      let safetyExplanations: string[] = [];
+
+      let low = 0.0;
+      let high = targetF;
+      let mid = targetF;
+      let res = initialRes;
+      let finalCvar95 = 0;
+
+      adjusted.maxLeverage = targetF;
+      res = runSimulation(adjusted);
+      let drawdowns = [...res.maxDrawdowns].sort((a, b) => a - b);
+      let cvarIndex = Math.floor(drawdowns.length * 0.95);
+      finalCvar95 = drawdowns[cvarIndex];
+
+      if (finalCvar95 > params.maxDrawdown) {
+        safetyExplanations.push(`Initial CVaR Breach (${(finalCvar95 * 100).toFixed(1)}% > ${(params.maxDrawdown * 100).toFixed(0)}%). Initiating precision risk control...`);
+
+        while ((high - low) > 0.001) {
+          mid = (low + high) / 2;
+          adjusted.maxLeverage = mid;
+          res = runSimulation(adjusted);
+
+          drawdowns = [...res.maxDrawdowns].sort((a, b) => a - b);
+          cvarIndex = Math.floor(drawdowns.length * 0.95);
+          finalCvar95 = drawdowns[cvarIndex];
+
+          if (finalCvar95 > params.maxDrawdown) {
+            high = mid;
+          } else {
+            low = mid;
+          }
+        }
+
+        adjusted.maxLeverage = low;
+        res = runSimulation(adjusted);
+        safetyExplanations.push(`Risk Control: Leverage precisely capped at ${(low * 100).toFixed(1)}% to satisfy Max Drawdown limit.`);
+      }
+
+      // 6. Update Portfolio Weights Display
+      // We keep the optimalWeights exactly as they are (summing to 1.0 for the equity slice)
+      const effectiveCashWeight = Math.max(0, 1 - res.optimalFraction);
+
+      if (optimalWeights.length > 0) {
+        const weightedAssets = assets.map((a, i) => ({
+          ...a,
+          weight: optimalWeights[i] // Raw equity weight (e.g., 30% NVDA)
+        }));
+
+        // Only show assets that actually received an allocation (> 0.1%)
+        const filteredAssets = weightedAssets.filter(a => (a.weight || 0) > 0.001);
+
+        setPortfolioWeights(filteredAssets);
+      } else {
+        setPortfolioWeights([]);
+      }
+
+      // 7. Calculate Alpha and Beta
+      let finalBeta: number | null = null;
+      let finalAlpha: number | null = null;
+
+      if (isMultiAsset && assetBetas.length === optimalWeights.length) {
+        const baseBeta = optimalWeights.reduce((sum, w, i) => sum + w * assetBetas[i], 0);
+        finalBeta = res.optimalFraction * baseBeta;
+
+        // Arithmetic expected return of leveraged portfolio
+        const finalMu = params.riskFree + res.optimalFraction * (baseMu - params.riskFree);
+
+        // Alpha = E[Rp] - (Rf + Beta * (E[Rm] - Rf))
+        finalAlpha = (finalMu - params.riskFree) - finalBeta * (spyMu - params.riskFree);
+      }
+
+      // 8. Decision Engine
+      const portfolioGrowth = res.maxGrowthRate;
+      const hurdleRate = spyGrowthRate + params.frictionCost;
+
+      let d: 'STRONG GO' | 'SCALED GO' | 'NO-GO' = 'NO-GO';
+      let reason = '';
+
+      if (effectiveCashWeight > 0.80 || portfolioGrowth < params.riskFree || (finalAlpha !== null && finalAlpha < -0.01)) {
+        d = 'NO-GO';
+        reason = 'Mathematical confirmation to abandon trade. Either Cash > 80%, Growth < Risk-Free, or deeply negative Alpha.';
+      } else if (portfolioGrowth > hurdleRate && finalAlpha !== null && finalAlpha > 0.02 && effectiveCashWeight < 0.50) {
+        d = 'STRONG GO';
+        reason = `Proof of efficient diversification and edge. Growth > SPY + Friction, Alpha > 2.0%, Cash < 50%.`;
+      } else if (portfolioGrowth > hurdleRate && finalAlpha !== null && finalAlpha > 0.02 && effectiveCashWeight >= 0.50) {
+        d = 'SCALED GO';
+        reason = `Strong edge (Alpha > 2.0%), but high Tail Risk constrains capital deployment (Cash ≥ 50%). Scale with caution.`;
+      } else if (portfolioGrowth > params.riskFree) {
+        d = 'SCALED GO';
+        reason = `Profitable, but heavily reliant on broad market performance rather than distinct mathematical edge.`;
+      } else {
+        d = 'NO-GO';
+        reason = `Projected growth is inferior to Risk-Free Rate. Abandon trade.`;
+      }
+
+      if (macroParams.isStressTest) {
+        reason += ` ALLOCATION SOLVED UNDER 'CRASH STRESS TEST' ASSUMPTIONS (Correlations > 0.85).`;
+      }
+
+      setDecision(d);
+      setDecisionReason(reason);
+      setAlpha(finalAlpha);
+      setBeta(finalBeta);
+      setFinalLambda(finalParams.lambda);
+
+      setAdjustments([...currentExplanations, ...explanations, ...safetyExplanations]);
+      setResult(res);
+      setIsRunning(false);
+    }, 10);
+  };
+
+  // Run initial simulation on mount
+  useEffect(() => {
+    handleRun();
+  }, []);
+
+  return (
+    <div className="flex h-screen bg-[#050505] text-gray-200 overflow-hidden font-sans selection:bg-emerald-500/30">
+      {/* Sidebar */}
+      <div className="bg-[#111] border-r border-gray-800 h-full w-80 flex-shrink-0 flex flex-col">
+        {/* Sidebar Tabs */}
+        <div className="flex border-b border-gray-800">
+          <button
+            onClick={() => setActiveTab('model')}
+            className={`flex-1 py-3 text-xs font-medium uppercase tracking-wider flex items-center justify-center space-x-2 transition-colors ${activeTab === 'model' ? 'text-emerald-500 bg-[#1A1A1A] border-b-2 border-emerald-500' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            <Settings2 size={14} />
+            <span className="sr-only">Model</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('portfolio')}
+            className={`flex-1 py-3 text-xs font-medium uppercase tracking-wider flex items-center justify-center space-x-2 transition-colors ${activeTab === 'portfolio' ? 'text-blue-500 bg-[#1A1A1A] border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            <Briefcase size={14} />
+            <span className="sr-only">Assets</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('macro')}
+            className={`flex-1 py-3 text-xs font-medium uppercase tracking-wider flex items-center justify-center space-x-2 transition-colors ${activeTab === 'macro' ? 'text-purple-500 bg-[#1A1A1A] border-b-2 border-purple-500' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            <Globe size={14} />
+            <span className="sr-only">Macro</span>
+          </button>
+        </div>
+
+        {/* Sidebar Content */}
+        <div className="flex-1 overflow-y-auto">
+          {activeTab === 'model' ? (
+            <InputPanel params={params} onChange={setParams} />
+          ) : activeTab === 'portfolio' ? (
+            <AssetInputPanel
+              assets={assets}
+              correlation={correlation}
+              onAssetsChange={setAssets}
+              onCorrelationChange={setCorrelation}
+            />
+          ) : (
+            <div className="p-6">
+              <MacroInputPanel params={macroParams} onChange={setMacroParams} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+        {/* Header */}
+        <header className="h-16 border-b border-gray-800 flex items-center justify-between px-8 bg-[#0A0A0A]">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-500">
+              <Activity size={24} />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold text-white tracking-tight">Poisson-Kelly Portfolio Architect</h1>
+              <p className="text-xs text-gray-500 font-mono">MULTI-ASSET JUMP DIFFUSION MODEL • v2.0.0</p>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => {
+                setParams(DEFAULT_PARAMS);
+                setMacroParams(DEFAULT_MACRO);
+                setAssets(DEFAULT_ASSETS);
+              }}
+              className="flex items-center space-x-2 px-4 py-2 text-xs font-medium text-gray-400 hover:text-white transition-colors"
+            >
+              <RotateCcw size={14} />
+              <span>RESET DEFAULTS</span>
+            </button>
+            <button
+              onClick={handleRun}
+              disabled={isRunning}
+              className={`
+                flex items-center space-x-2 px-6 py-2 rounded-md font-medium text-sm transition-all
+                ${isRunning
+                  ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20 hover:shadow-emerald-900/40'
+                }
+              `}
+            >
+              {isRunning ? (
+                <span className="animate-pulse">CALCULATING...</span>
+              ) : (
+                <>
+                  <Play size={16} fill="currentColor" />
+                  <span>RUN ANALYSIS</span>
+                </>
+              )}
+            </button>
+          </div>
+        </header>
+
+        {/* Dashboard Content */}
+        <main className="flex-1 overflow-y-auto p-8">
+          {result ? (
+            <div className="max-w-7xl mx-auto space-y-6">
+              <SummaryMetrics
+                result={result}
+                initialWealth={params.initialWealth}
+                covarianceMatrix={covarianceMatrix}
+                assets={assets}
+              />
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <SimulationChart result={result} />
+                <KellyCurveChart result={result} />
+              </div>
+
+              {/* Portfolio Breakdown */}
+              {(portfolioWeights.length > 0 || result.optimalFraction < 1) && (
+                <div className="bg-[#1A1A1A] border border-gray-800 rounded-lg p-6">
+                  <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4">Optimal Portfolio Composition</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+
+                    {/* Render Stock Allocations */}
+                    {portfolioWeights.map((asset) => {
+                      // Total Allocation = Equity Weight * Optimal Leverage Fraction
+                      const totalAllocation = (asset.weight || 0) * result.optimalFraction;
+                      return (
+                        <div key={asset.id} className="bg-[#111] p-4 rounded border border-gray-800 flex items-center justify-between">
+                          <div>
+                            <span className="text-lg font-bold text-white block">{asset.ticker}</span>
+                            <span className="text-xs text-blue-400 font-medium">Equity Pie: {((asset.weight || 0) * 100).toFixed(1)}%</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-xl font-mono text-emerald-400 block">{(totalAllocation * 100).toFixed(1)}%</span>
+                            <span className="text-[10px] text-gray-500 uppercase">Account Total</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Render Cash Allocation */}
+                    {result.optimalFraction < 1.0 && (
+                      <div className="bg-gray-900/50 p-4 rounded border border-gray-700 flex items-center justify-between">
+                        <div>
+                          <span className="text-lg font-bold text-gray-300 block">CASH</span>
+                          <span className="text-xs text-gray-500 font-medium">Yield: {(params.riskFree * 100).toFixed(2)}%</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xl font-mono text-gray-300 block">{((1 - result.optimalFraction) * 100).toFixed(1)}%</span>
+                          <span className="text-[10px] text-gray-500 uppercase">Account Total</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Detailed Analysis / Recommendation */}
+              <div className="bg-[#1A1A1A] border border-gray-800 rounded-lg p-6">
+                <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4">Investment Recommendation</h3>
+                <div className="prose prose-invert prose-sm max-w-none text-gray-300 font-mono">
+                  <p>
+                    Based on the Multi-Asset Poisson-Kelly model, the optimal total leverage fraction is <strong className="text-emerald-400">{(result.optimalFraction * 100).toFixed(2)}%</strong> of the optimized portfolio.
+                  </p>
+
+                  <p className="text-xs text-gray-400 mt-1 mb-3">
+                    Includes {params.kellyFraction}x Kelly scaling.
+                    {result.optimalFraction < (result.unconstrainedFraction * params.kellyFraction) && (
+                      <span> Further reduced by constraints (Max Leverage or CVaR Limit).</span>
+                    )}
+                  </p>
+
+                  <p>
+                    The <strong>Constrained Solver</strong> first determined the optimal asset mix (including Cash) to maximize geometric growth. The <strong>Sizing Model</strong> then adjusted the total exposure to account for Jump Risk (λ={finalLambda !== null ? finalLambda.toFixed(2) : params.lambda}) and Tail Risk (CVaR).
+                  </p>
+
+                  <p className="mt-2">
+                    This allocation maximizes the expected geometric growth rate to <strong className="text-blue-400">{(result.maxGrowthRate * 100).toFixed(2)}%</strong> per annum.
+                  </p>
+
+                  {/* Macro Impact Section */}
+                  {adjustments.length > 0 && (
+                    <div className="mt-4 p-4 bg-purple-900/10 border border-purple-900/30 rounded text-purple-200/80 text-xs">
+                      <strong className="block mb-2 text-purple-400 uppercase tracking-wider">Model Adjustments:</strong>
+                      <ul className="list-disc pl-4 space-y-1">
+                        {adjustments.map((adj, i) => (
+                          <li key={i}>{adj}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="mt-4 p-4 bg-yellow-900/10 border border-yellow-900/30 rounded text-yellow-200/80 text-xs">
+                    <strong>ESTIMATION RISK WARNING:</strong> The output above assumes your inputs are accurate.
+                    {params.kellyFraction >= 1.0 ?
+                      ` You are running Full-Kelly (1.0x). Given the current macro volatility, scaling down to a "Half-Kelly" is strongly recommended to algorithmically protect against estimation errors.` :
+                      ` You are appropriately commanding a computationally constrained ${params.kellyFraction}x Kelly fraction, heavily mitigating variance drain and estimation risk.`}
+                  </div>
+                </div>
+              </div>
+
+              {/* Conviction Output */}
+              <ConvictionCard
+                decision={decision}
+                reason={decisionReason}
+                portfolioGrowth={result.maxGrowthRate}
+                spyGrowth={benchmarkGrowth}
+                riskFree={params.riskFree}
+                alpha={alpha}
+                beta={beta}
+              />
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-500">
+              Click "RUN ANALYSIS" to generate model outputs.
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+
+===== FILE: src/index.css =====
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  background-color: #050505;
+  color: #e5e5e5;
+  font-family: var(--font-sans);
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #111;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+
+===== FILE: src/main.tsx =====
+
+import {StrictMode} from 'react';
+import {createRoot} from 'react-dom/client';
+import App from './App.tsx';
+import './index.css';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+
+
+===== FILE: src/utils/macroEconomics.ts =====
+
+
+import { ModelParams } from './poissonKelly';
+
+export interface MacroParams {
+  cpi: number;          // YoY Inflation %
+  fedFundsRate: number; // %
+  gdpGrowth: number;    // YoY %
+  unemployment: number; // %
+  isStressTest: boolean; // Forces High Correlation Regime
+}
+
+export const DEFAULT_MACRO: MacroParams = {
+  cpi: 2.4,
+  fedFundsRate: 3.65,
+  gdpGrowth: 1.4,
+  unemployment: 3.6,
+  isStressTest: false
+};
+
+// "Neutral" baselines for relative adjustment
+const BASELINE = {
+  cpi: 2.0,
+  gdp: 2.5,
+  unemployment: 4.0,
+  fedFunds: 3.0
+};
+
+export function adjustParamsWithMacro(baseParams: ModelParams, macro: MacroParams): { adjusted: ModelParams, explanations: string[] } {
+  const explanations: string[] = [];
+  const adj = { ...baseParams };
+
+  // 1. Risk Free Rate Adjustment
+  // The theoretical risk-free rate is closely tied to the Fed Funds Rate.
+  // We blend the user's input with the Fed Rate (50/50) or override? 
+  // Let's override for the "Macro Adjusted" model to show the impact.
+  adj.riskFree = macro.fedFundsRate / 100;
+  if (Math.abs(adj.riskFree - baseParams.riskFree) > 0.001) {
+    explanations.push(`Risk-free rate adjusted to ${macro.fedFundsRate}% to match Federal Funds Rate.`);
+  }
+
+  // 2. Expected Return (Drift) Adjustment
+  // GDP Growth: Higher growth implies higher corporate earnings.
+  // Unemployment: Lower unemployment implies stronger consumer spending (up to a point of overheating).
+  // Sensitivity: 1% GDP beat adds ~1.5% to equity return? Let's be conservative: 0.5 factor.
+  const gdpDelta = macro.gdpGrowth - BASELINE.gdp;
+  const unempDelta = macro.unemployment - BASELINE.unemployment;
+
+  // Taylor Rule-ish adjustment for equity premium
+  // If GDP is higher than baseline, increase mu.
+  // If Unemployment is higher than baseline, decrease mu.
+  const driftAdj = (gdpDelta * 0.015) - (unempDelta * 0.01);
+  adj.mu = baseParams.mu + driftAdj;
+
+  if (Math.abs(driftAdj) > 0.001) {
+    const direction = driftAdj > 0 ? "increased" : "decreased";
+    explanations.push(`Expected return ${direction} by ${(Math.abs(driftAdj) * 100).toFixed(2)}% due to GDP (${macro.gdpGrowth}%) and Unemployment (${macro.unemployment}%) divergence.`);
+  }
+
+  // 3. Volatility Adjustment
+  // CPI: High inflation increases uncertainty.
+  // Fed Funds: High rates can increase market stress.
+  const cpiExcess = Math.max(0, macro.cpi - BASELINE.cpi); // Only penalize high inflation
+  const volMultiplier = 1 + (cpiExcess * 0.05); // 5% vol increase per 1% excess CPI
+
+  adj.sigma = baseParams.sigma * volMultiplier;
+  if (volMultiplier > 1.001) {
+    explanations.push(`Volatility scaled up by ${((volMultiplier - 1) * 100).toFixed(1)}% due to elevated CPI (${macro.cpi}%).`);
+  }
+
+  // 4. Jump Intensity Adjustment (Crash Risk)
+  // Recession indicators: Negative GDP or High Unemployment (>6%)
+  let jumpMultiplier = 1;
+  if (macro.gdpGrowth < 0) jumpMultiplier += 0.5; // Recession
+  if (macro.unemployment > 6.0) jumpMultiplier += 0.3; // High stress
+  if (macro.cpi > 5.0) jumpMultiplier += 0.2; // Stagflation risk
+
+  adj.lambda = baseParams.lambda * jumpMultiplier;
+  if (jumpMultiplier > 1.001) {
+    explanations.push(`Jump intensity (crash risk) increased by ${((jumpMultiplier - 1) * 100).toFixed(0)}% due to macroeconomic stress indicators.`);
+  }
+
+  return { adjusted: adj, explanations };
+}
+
+
+===== FILE: src/utils/poissonKelly.ts =====
+
+
+/**
+ * Poisson-Kelly Model Utilities
+ * 
+ * Implements the optimal leverage calculation for a Jump Diffusion model (Merton).
+ */
+
+// Gaussian random number generator (Box-Muller transform)
+function randn() {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+export interface ModelParams {
+  mu: number;          // Total Expected Annual Return (decimal)
+  sigma: number;       // Annual Volatility (decimal)
+  riskFree: number;    // Risk-free Rate (decimal)
+  lambda: number;      // Jump Intensity (events per year)
+  jumpMean: number;    // Mean of log-jump size (e.g., -0.2 for -20% drop on average)
+  jumpVol: number;     // Volatility of log-jump size
+  horizon: number;     // Investment Horizon (years)
+  initialWealth: number; // Initial Portfolio Value
+  simulations: number; // Number of Monte Carlo paths
+  maxLeverage: number; // Maximum allowed leverage (e.g., 1.0 for 100% cash)
+  maxAssetWeight: number; // Maximum weight for a single asset (e.g., 0.30 for 30%)
+  kellyFraction: number; // Fractional Kelly (e.g. 0.5 for Half-Kelly)
+  frictionCost: number; // Annual friction cost (decimal, e.g. 0.001)
+  maxDrawdown: number; // Max acceptable drawdown (decimal, e.g. 0.25)
+}
+
+export interface SimulationResult {
+  optimalFraction: number;
+  unconstrainedFraction: number; // The theoretical optimal if no cap
+  maxGrowthRate: number;
+  paths: { time: number; value: number }[][];
+  finalWealths: number[];
+  maxDrawdowns: number[];
+  kellyCurve: { leverage: number; growth: number }[];
+}
+
+// Calculate expected value of (Y - 1) where Y is lognormal(jumpMean, jumpVol)
+export function getExpectedJumpSize(jumpMean: number, jumpVol: number): number {
+  // E[Y] = exp(mu + 0.5 * sigma^2)
+  const expectedY = Math.exp(jumpMean + 0.5 * jumpVol * jumpVol);
+  return expectedY - 1;
+}
+
+// Calculate the growth rate g(f)
+// g(f) = r + f(mu - r - lambda*k) - 0.5*sigma^2*f^2 + lambda * E[ln(1 + f(Y-1))]
+export function calculateGrowthRate(f: number, params: ModelParams): number {
+  const { mu, sigma, riskFree, lambda, jumpMean, jumpVol } = params;
+  const k = getExpectedJumpSize(jumpMean, jumpVol);
+
+  // Numerical Integration for E[ln(1 + f(Y-1))]
+  // Y = exp(x), x ~ N(jumpMean, jumpVol^2)
+  let jumpExpectation = 0;
+  const steps = 200;
+  const range = 5 * jumpVol; // Integrate +/- 5 sigmas
+  const stepSize = (2 * range) / steps;
+
+  for (let i = 0; i <= steps; i++) {
+    const x = jumpMean - range + i * stepSize;
+    const Y = Math.exp(x);
+
+    // PDF of x
+    const pdfX = (1 / (Math.sqrt(2 * Math.PI) * jumpVol)) * Math.exp(-0.5 * Math.pow((x - jumpMean) / jumpVol, 2));
+
+    // Value inside expectation
+    // Check for ruin: if 1 + f(Y-1) <= 0, log is undefined (ruin)
+    const wealthFactor = 1 + f * (Y - 1);
+    let val = 0;
+    if (wealthFactor <= 1e-9) {
+      val = -1e9; // Penalty for ruin
+    } else {
+      val = Math.log(wealthFactor);
+    }
+
+    jumpExpectation += val * pdfX * stepSize;
+  }
+
+  const driftPart = (mu - lambda * k - riskFree) * f;
+  const volPart = 0.5 * sigma * sigma * f * f;
+  const growth = riskFree + driftPart - volPart + lambda * jumpExpectation;
+
+  return growth;
+}
+
+// Optimize f using Golden Section Search
+function findOptimalFraction(params: ModelParams): number {
+  const phi = (1 + Math.sqrt(5)) / 2;
+  let a = 0;
+  let b = 5; // Theoretical search upper bound
+
+  // Refine range: check if growth decreases immediately
+  if (calculateGrowthRate(0.01, params) < calculateGrowthRate(0, params)) {
+    return 0;
+  }
+
+  let c = b - (b - a) / phi;
+  let d = a + (b - a) / phi;
+
+  const tol = 1e-4;
+
+  while (Math.abs(b - a) > tol) {
+    if (calculateGrowthRate(c, params) < calculateGrowthRate(d, params)) {
+      a = c;
+    } else {
+      b = d;
+    }
+    c = b - (b - a) / phi;
+    d = a + (b - a) / phi;
+  }
+
+  return (a + b) / 2;
+}
+
+export function runSimulation(params: ModelParams): SimulationResult {
+  const theoreticalOptimalF = findOptimalFraction(params);
+
+  // Apply constraint
+  const optimalF = Math.min(theoreticalOptimalF, params.maxLeverage);
+
+  const maxGrowth = calculateGrowthRate(optimalF, params);
+
+  // Generate Kelly Curve
+  const kellyCurve = [];
+  // Show curve up to 2x the optimal or at least 2.0
+  const curveMax = Math.max(2.0, theoreticalOptimalF * 1.5);
+
+  for (let l = 0; l <= curveMax; l += (curveMax / 50)) {
+    let growth = calculateGrowthRate(l, params);
+    if (growth < -1.0) growth = -1.0; // Clamp penalty to -100% for smooth charting
+
+    kellyCurve.push({
+      leverage: l,
+      growth: growth
+    });
+  }
+
+  // Monte Carlo Simulation
+  const dt = 1 / 252; // Daily steps
+  const nSteps = Math.floor(params.horizon * 252);
+  const paths: { time: number; value: number }[][] = [];
+  const finalWealths: number[] = [];
+  const maxDrawdowns: number[] = [];
+
+  const k = getExpectedJumpSize(params.jumpMean, params.jumpVol);
+
+  // Continuous drift component for log wealth
+  // dlnW = (r + f(mu - r - lambda*k) - 0.5*(f*sigma)^2)dt + f*sigma*dW
+  // Note: The formula in original code line 143 was slightly different, let's stick to what was there or correct it.
+  // Original: params.riskFree + optimalF * (params.mu - params.riskFree - params.lambda * k) - 0.5 * Math.pow(optimalF * params.sigma, 2);
+  // This matches the Merton model log-drift.
+
+  const logDrift = params.riskFree + optimalF * (params.mu - params.riskFree - params.lambda * k) - 0.5 * Math.pow(optimalF * params.sigma, 2);
+  const diffusionVol = optimalF * params.sigma;
+
+  for (let i = 0; i < params.simulations; i++) {
+    const path = [{ time: 0, value: params.initialWealth }];
+    let currentWealth = params.initialWealth;
+    let peakWealth = params.initialWealth;
+    let maxDrawdown = 0;
+    let ruined = false;
+
+    for (let t = 1; t <= nSteps; t++) {
+      if (ruined) {
+        if (t % 5 === 0 || t === nSteps) path.push({ time: t / 252, value: 0 });
+        continue;
+      }
+
+      // Diffusion step
+      const dZ = randn() * Math.sqrt(dt);
+
+      // Jump step
+      let jumpLogReturn = 0;
+      // Poisson check
+      if (Math.random() < params.lambda * dt) {
+        // Jump size Y is lognormal(jumpMean, jumpVol)
+        // Y - 1 is the percentage change in asset price
+        // Wealth factor = 1 + f * (Y - 1)
+
+        // Use Box-Muller for jump size
+        const logY = params.jumpMean + params.jumpVol * randn();
+        const Y = Math.exp(logY);
+        const wealthFactor = 1 + optimalF * (Y - 1);
+
+        if (wealthFactor <= 1e-9) {
+          ruined = true;
+          currentWealth = 0;
+        } else {
+          jumpLogReturn = Math.log(wealthFactor);
+        }
+      }
+
+      if (!ruined) {
+        // Update wealth
+        // W_t = W_{t-1} * exp(drift*dt + vol*dZ + jump)
+        currentWealth *= Math.exp(logDrift * dt + diffusionVol * dZ + jumpLogReturn);
+
+        // Update Peak and Drawdown
+        if (currentWealth > peakWealth) {
+          peakWealth = currentWealth;
+        } else {
+          const dd = (peakWealth - currentWealth) / peakWealth;
+          if (dd > maxDrawdown) maxDrawdown = dd;
+        }
+      }
+
+      // Store points (downsample)
+      if (t % 5 === 0 || t === nSteps) {
+        path.push({ time: t / 252, value: currentWealth });
+      }
+    }
+
+    if (ruined) maxDrawdown = 1.0;
+
+    paths.push(path);
+    finalWealths.push(currentWealth);
+    maxDrawdowns.push(maxDrawdown);
+  }
+
+  return {
+    optimalFraction: optimalF,
+    unconstrainedFraction: theoreticalOptimalF,
+    maxGrowthRate: maxGrowth,
+    paths,
+    finalWealths,
+    maxDrawdowns,
+    kellyCurve
+  };
+}
+
+
+===== FILE: src/utils/portfolioOptimizer.ts =====
+
+
+
+/**
+ * Constrained Multi-Asset Kelly Solver
+ * 
+ * Uses Projected Gradient Descent to maximize the Geometric Growth Rate
+ * subject to:
+ * 1. No shorting (w >= 0)
+ * 2. Max weight constraint (w <= maxWeight)
+ * 3. No leverage (sum(w) <= 1)
+ * 
+ * Objective: Maximize w'μ - 0.5 * w'Σw + Sum(λ * E[ln(1 + wJ)]) + (1 - sum(w)) * r_f
+ */
+
+export interface Asset {
+  id: string;
+  ticker: string;
+  mu: number;    // Expected Return
+  sigma: number; // Volatility
+  lambda?: number; // Jump Intensity
+  jumpMean?: number; // Jump Mean
+  jumpVol?: number; // Jump Volatility
+  weight?: number; // Calculated optimal weight
+}
+
+interface JumpParams {
+  lambda: number;
+  mu: number;
+  sigma: number;
+}
+
+// Helper: Dot product
+const dot = (a: number[], b: number[]) => a.reduce((sum, v, i) => sum + v * b[i], 0);
+
+// Helper: Matrix-Vector multiplication
+const matVec = (M: number[][], v: number[]) => M.map(row => dot(row, v));
+
+// Projection onto Bounded Simplex (sum w = 1, 0 <= w <= u)
+// Solves: min ||w - y||^2 s.t. sum(w) = 1, 0 <= w <= u
+function projectToBoundedSimplex(y: number[], upperBounds: number[]): number[] {
+  const n = y.length;
+
+  // We need to find lambda such that Sum(clamp(y_i - lambda, 0, u_i)) = 1
+  // f(lambda) = Sum(...) - 1 is monotonically decreasing.
+  // We use bisection search.
+
+  let low = Math.min(...y) - 1; // Sufficiently low
+  let high = Math.max(...y);    // Sufficiently high
+  const tol = 1e-7;
+  const maxIter = 50;
+
+  let lambda = 0;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    lambda = (low + high) / 2;
+    let sum = 0;
+
+    for (let i = 0; i < n; i++) {
+      sum += Math.max(0, Math.min(upperBounds[i], y[i] - lambda));
+    }
+
+    if (Math.abs(sum - 1) < tol) break;
+
+    if (sum > 1) {
+      // Sum is too big, need to increase lambda (subtract more)
+      low = lambda;
+    } else {
+      high = lambda;
+    }
+  }
+
+  return y.map((yi, i) => Math.max(0, Math.min(upperBounds[i], yi - lambda)));
+}
+
+// Quadratic Programming Solver using Projected Gradient Descent
+// Augmented with Jump Risk Gradient
+function solveQP(
+  muVec: number[],      // Expected returns
+  sigmaMat: number[][], // Covariance matrix
+  jumpParams: (JumpParams | null)[], // Jump parameters per asset
+  upperBounds: number[], // Max weight per asset
+  iterations: number = 10000,
+  learningRate: number = 0.05
+): number[] {
+  const n = muVec.length;
+  // Objective: Maximize w'mu - 0.5 * w'Sigma w + Sum(lambda * E[ln(1+wJ)])
+  // Equivalent to Minimize 0.5 * w'Sigma w - w'mu - Sum(...)
+  // Gradient of minimization objective: Sigma w - mu - Gradient(JumpTerm)
+
+  let w = Array(n).fill(1 / n); // Start with equal weights
+  const tol = 1e-9;
+
+  // Adaptive learning rate parameters
+  let alpha = learningRate;
+
+  for (let iter = 0; iter < iterations; iter++) {
+    // 1. Diffusion Gradient: Sigma * w - mu
+    const grad = matVec(sigmaMat, w).map((v, i) => v - muVec[i]);
+
+    // 2. Jump Risk Gradient (Full-Information)
+    // Gradient of - Sum(lambda * E[ln(1 + wJ)])
+    // = - Sum(lambda * E[ J / (1 + wJ) ])
+    // We subtract this from the total gradient (since we are minimizing)
+
+    for (let i = 0; i < n; i++) {
+      const params = jumpParams[i];
+      if (params && params.lambda > 0) {
+        const { lambda, mu: J, sigma: vol } = params;
+        const w_i = w[i];
+
+        // Taylor approximation of E[ J / (1 + wJ) ]
+        // approx = J / (1 + wJ) - w * vol^2 / (1 + wJ)^3
+
+        const denom = 1 + w_i * J;
+        // Safety check to avoid singularity if w approaches -1/J (which is > 1 for negative J)
+        if (denom > 1e-4) {
+          const term1 = J / denom;
+          const term2 = (w_i * vol * vol) / (Math.pow(denom, 3));
+          const expectation = term1 - term2;
+
+          // Add to gradient (subtracting the positive benefit = adding penalty)
+          grad[i] -= lambda * expectation;
+        } else {
+          // Near singularity (ruin), gradient pushes back massively
+          grad[i] -= lambda * -1000;
+        }
+      }
+    }
+
+    // Gradient Descent Step
+    // w_new = w - alpha * grad
+    const w_new = w.map((v, i) => v - alpha * grad[i]);
+
+    // Projection onto Bounded Simplex
+    const w_proj = projectToBoundedSimplex(w_new, upperBounds);
+
+    // Check convergence
+    let diff = 0;
+    for (let i = 0; i < n; i++) diff += Math.abs(w_proj[i] - w[i]);
+
+    w = w_proj;
+    if (diff < tol) break;
+
+    // Simple annealing to refine solution
+    if (iter % 1000 === 0) alpha *= 0.9;
+  }
+
+  return w;
+}
+
+export function optimizePortfolio(
+  assets: Asset[],
+  correlation: number,
+  covarianceMatrix?: number[][],
+  maxWeight: number = 1.0, // Default to 100% cap
+  isStressTest: boolean = false
+): { weights: number[], portMu: number, portSigma: number } {
+  if (assets.length === 0) return { weights: [], portMu: 0, portSigma: 0 };
+
+  // 1. Prepare Inputs (Stocks Only)
+  const n = assets.length;
+  const muVec = assets.map(a => a.mu);
+
+  // Construct Covariance Matrix (N x N)
+  const sigmaMat: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const row: number[] = [];
+    for (let j = 0; j < n; j++) {
+      if (covarianceMatrix) {
+        // If a pre-computed Ledoit-Wolf matrix exists, extract base correlation and inflate if necessary
+        let cov = covarianceMatrix[i][j];
+        if (isStressTest && i !== j) {
+          const stdI = Math.sqrt(covarianceMatrix[i][i]);
+          const stdJ = Math.sqrt(covarianceMatrix[j][j]);
+          const currentCor = cov / (stdI * stdJ);
+          const stressCor = Math.max(currentCor, 0.85); // Spike correlation to 0.85 minimum
+          cov = stressCor * stdI * stdJ;
+        }
+        row.push(cov);
+      } else {
+        if (i === j) {
+          row.push(assets[i].sigma * assets[i].sigma); // Variance on diagonal
+        } else {
+          const activeCor = isStressTest ? Math.max(correlation, 0.85) : correlation;
+          row.push(activeCor * assets[i].sigma * assets[j].sigma); // Covariance off-diagonal
+        }
+      }
+    }
+    sigmaMat.push(row);
+  }
+
+  // Prepare Jump Parameters
+  const jumpParams: (JumpParams | null)[] = assets.map(a => (a.lambda && a.lambda > 0) ? {
+    lambda: a.lambda,
+    mu: a.jumpMean || -0.05,
+    sigma: a.jumpVol || 0.05
+  } : null);
+
+  // Prepare Upper Bounds
+  const upperBounds = Array(n).fill(maxWeight);
+
+  // 2. Solve for Optimal Weights (Stocks Only)
+  const weights = solveQP(muVec, sigmaMat, jumpParams, upperBounds);
+
+  // Normalize weights to sum to 1.0 (in case sum(upperBounds) < 1.0)
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  if (weightSum > 0 && Math.abs(weightSum - 1.0) > 1e-5) {
+    for (let i = 0; i < n; i++) {
+      weights[i] /= weightSum;
+    }
+  }
+
+  // 3. Calculate Portfolio Stats
+  let portMu = 0;
+  let portVar = 0;
+
+  for (let i = 0; i < n; i++) portMu += weights[i] * muVec[i];
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      portVar += weights[i] * weights[j] * sigmaMat[i][j];
+    }
+  }
+
+  return {
+    weights,
+    portMu,
+    portSigma: Math.sqrt(portVar)
+  };
+}
+
+
+===== FILE: src/utils/statistics.ts =====
+
+import * as ss from 'simple-statistics';
+
+// --- 1. Itô's Lemma Arithmetic Drift Correction ---
+
+/**
+ * Calculates the arithmetic drift (mu) from geometric mean returns using Itô's Lemma.
+ * Formula: mu = (mean_log_return + 0.5 * sigma^2) * 252
+ */
+export function calculateArithmeticDrift(logReturns: number[]): { mu: number, sigma: number } {
+  const meanLogReturn = ss.mean(logReturns);
+  const stdDev = ss.standardDeviation(logReturns);
+
+  // Convert mean daily log return back to standard daily percentage return
+  const dailyArithmeticDrift = Math.exp(meanLogReturn) - 1;
+  const annualizedMu = dailyArithmeticDrift * 252;
+  const annualizedSigma = stdDev * Math.sqrt(252);
+
+  return { mu: annualizedMu, sigma: annualizedSigma };
+}
+
+// --- 2. Covariance Shrinkage (Ledoit-Wolf) ---
+
+/**
+ * Calculates the Ledoit-Wolf shrunk covariance matrix.
+ * Target: Constant Correlation Matrix.
+ * 
+ * Reference: "Honey, I Shrunk the Sample Covariance Matrix" (Ledoit & Wolf, 2004)
+ */
+export function calculateLedoitWolfCovariance(returns: number[][]): number[][] {
+  const n = returns.length; // number of assets
+  const t = returns[0].length; // number of observations (days)
+
+  if (t < 2) throw new Error("Insufficient data for covariance calculation");
+
+  // 1. Calculate Sample Covariance Matrix (S)
+  const means = returns.map(r => ss.mean(r));
+  const centered = returns.map((r, i) => r.map(val => val - means[i]));
+
+  const sampleCov: number[][] = Array(n).fill(0).map(() => Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = i; j < n; j++) {
+      let sum = 0;
+      for (let k = 0; k < t; k++) {
+        sum += centered[i][k] * centered[j][k];
+      }
+      const val = sum / (t - 1);
+      sampleCov[i][j] = val;
+      sampleCov[j][i] = val;
+    }
+  }
+
+  // 2. Calculate Target Matrix (F) - Constant Correlation
+  // Average correlation
+  let sumCor = 0;
+  let countCor = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const stdI = Math.sqrt(sampleCov[i][i]);
+      const stdJ = Math.sqrt(sampleCov[j][j]);
+      const cor = sampleCov[i][j] / (stdI * stdJ);
+      sumCor += cor;
+      countCor++;
+    }
+  }
+  const avgCor = countCor > 0 ? sumCor / countCor : 0;
+
+  const targetCov: number[][] = Array(n).fill(0).map(() => Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) {
+        targetCov[i][j] = sampleCov[i][i];
+      } else {
+        const stdI = Math.sqrt(sampleCov[i][i]);
+        const stdJ = Math.sqrt(sampleCov[j][j]);
+        targetCov[i][j] = avgCor * stdI * stdJ;
+      }
+    }
+  }
+
+  // 3. Calculate Shrinkage Intensity (delta)
+  // This is a simplified estimation of the optimal shrinkage intensity
+  // based on the variance of the sample covariance.
+  // Full implementation of Ledoit-Wolf 2004 is complex.
+  // We use a robust estimator: delta = min(1, max(0, kappa / t))
+
+  // Calculate pi (sum of asymptotic variances of entries of S)
+  let pi = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      let sumSq = 0;
+      for (let k = 0; k < t; k++) {
+        const term = (centered[i][k] * centered[j][k]) - sampleCov[i][j];
+        sumSq += term * term;
+      }
+      pi += sumSq / t; // asymptotic variance
+    }
+  }
+
+  // Calculate gamma (distance between S and F)
+  let gamma = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const diff = sampleCov[i][j] - targetCov[i][j];
+      gamma += diff * diff;
+    }
+  }
+
+  // Calculate rho (sum of asymptotic covariances) - approximated
+  // For constant correlation target, rho is often close to sum of variances of diagonal
+  // We use a simplified rho calculation for stability
+  let rho = 0;
+  // (Skipping full rho calculation for brevity, assuming pi is dominant term for shrinkage)
+  // A common simplification is delta = 1 / t for very noisy data, or using the pi/gamma ratio.
+  // Let's use the standard formula: kappa = (pi - rho) / gamma.
+  // If we assume rho is small relative to pi (conservative), we can use kappa = pi / gamma.
+
+  const kappa = pi / gamma;
+  const delta = Math.max(0, Math.min(1, kappa / t));
+
+  // 4. Shrink
+  const shrunkCov: number[][] = Array(n).fill(0).map(() => Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      shrunkCov[i][j] = (1 - delta) * sampleCov[i][j] + delta * targetCov[i][j];
+      // Annualize
+      shrunkCov[i][j] *= 252;
+    }
+  }
+
+  return shrunkCov;
+}
+
+
+// --- 3. MLE for Jump Diffusion ---
+
+/**
+ * Performs Maximum Likelihood Estimation to fit Merton Jump Diffusion parameters.
+ * Returns: { lambda, jumpMean, jumpVol }
+ */
+export function mleJumpDiffusion(logReturns: number[]): { lambda: number, jumpMean: number, jumpVol: number } {
+  // Initial estimates using moments/heuristics
+  const mean = ss.mean(logReturns);
+  const std = ss.standardDeviation(logReturns);
+
+  // Define Likelihood Function
+  // We approximate the daily return PDF as a mixture of two normals:
+  // 1. No jump: N(mu*dt, sigma^2*dt) with prob (1 - lambda*dt)
+  // 2. Jump: N(mu*dt + mu_J, sigma^2*dt + sigma_J^2) with prob (lambda*dt)
+  // Note: This is a simplification of the full Poisson sum, valid for small dt (1/252)
+
+  const dt = 1 / 252;
+
+  // We fix mu and sigma to the sample estimates to reduce dimensionality and improve stability
+  // The solver only optimizes lambda, jumpMean, jumpVol
+  const mu_diff = mean; // drift per day
+  const var_diff = std * std; // variance per day
+
+  function negLogLikelihood(params: number[]): number {
+    const [lambda, mu_J, sigma_J] = params;
+
+    // CONSTRAINTS: Force Downside Tail Risk Only
+    if (lambda < 0 || lambda > 252) return 1e9;
+    if (sigma_J < 0) return 1e9;
+    if (mu_J >= -0.01) return 1e9; // Jump mean MUST be worse than -1%
+
+    const probJump = lambda * dt;
+    const probNoJump = 1 - probJump;
+
+    if (probNoJump < 0) return 1e9;
+
+    let logLikelihood = 0;
+
+    // Pre-calculate constants
+    const sigma_no_jump = Math.sqrt(var_diff);
+    const sigma_jump = Math.sqrt(var_diff + sigma_J * sigma_J);
+
+    for (const x of logReturns) {
+      // PDF of No Jump
+      const d1 = (x - mu_diff) / sigma_no_jump;
+      const pdf1 = (1 / (sigma_no_jump * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * d1 * d1);
+
+      // PDF of Jump
+      const d2 = (x - (mu_diff + mu_J)) / sigma_jump;
+      const pdf2 = (1 / (sigma_jump * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * d2 * d2);
+
+      const pdf = probNoJump * pdf1 + probJump * pdf2;
+
+      if (pdf > 0) {
+        logLikelihood += Math.log(pdf);
+      } else {
+        logLikelihood -= 1e9; // Penalty
+      }
+    }
+
+    return -logLikelihood; // Minimize negative log likelihood
+  }
+
+  // Multi-start Nelder-Mead to avoid getting stuck
+  // Try multiple starting guesses for jumpMean (ranging from moderate to severe crashes)
+  const startingPoints = [
+    [0.5, -0.05, 0.03],   // Small crashes: ~5% drop
+    [1.0, -0.15, 0.08],   // Mid crashes: ~15% drop (e.g. tech selloff)
+    [0.3, -0.30, 0.12],   // Large crashes: ~30% drop (e.g. bear market leg)
+    [2.0, -0.08, 0.05],   // Frequent small dips
+  ];
+
+  let bestResult = { x: [0.5, -0.10, 0.05], fx: Infinity };
+
+  for (const start of startingPoints) {
+    const result = nelderMead(negLogLikelihood, start, { maxIter: 1000, tolerance: 1e-6 });
+    if (result.fx < bestResult.fx) {
+      bestResult = result;
+    }
+  }
+
+  return {
+    lambda: Math.max(0, Math.min(10, bestResult.x[0])),
+    jumpMean: Math.min(-0.01, bestResult.x[1]),  // Clamp to strictly negative
+    jumpVol: Math.max(0.01, bestResult.x[2])
+  };
+}
+
+/**
+ * Simple Nelder-Mead optimization algorithm
+ */
+function nelderMead(f: (x: number[]) => number, x0: number[], opts: { maxIter: number, tolerance: number }) {
+  const n = x0.length;
+  const alpha = 1;
+  const gamma = 2;
+  const rho = 0.5;
+  const sigma = 0.5;
+
+  // Initialize simplex
+  let simplex: { x: number[], fx: number }[] = [];
+  simplex.push({ x: x0, fx: f(x0) });
+
+  for (let i = 0; i < n; i++) {
+    const x = [...x0];
+    x[i] = x[i] !== 0 ? x[i] * 1.05 : 0.00025;
+    simplex.push({ x, fx: f(x) });
+  }
+
+  for (let iter = 0; iter < opts.maxIter; iter++) {
+    // Sort
+    simplex.sort((a, b) => a.fx - b.fx);
+
+    const best = simplex[0];
+    const worst = simplex[n];
+    const secondWorst = simplex[n - 1];
+
+    // Check convergence
+    const diff = Math.abs(worst.fx - best.fx);
+    if (diff < opts.tolerance) break;
+
+    // Centroid
+    const centroid = Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        centroid[j] += simplex[i].x[j];
+      }
+    }
+    for (let j = 0; j < n; j++) centroid[j] /= n;
+
+    // Reflection
+    const xr = centroid.map((c, j) => c + alpha * (c - worst.x[j]));
+    const fxr = f(xr);
+
+    if (best.fx <= fxr && fxr < secondWorst.fx) {
+      simplex[n] = { x: xr, fx: fxr };
+      continue;
+    }
+
+    // Expansion
+    if (fxr < best.fx) {
+      const xe = centroid.map((c, j) => c + gamma * (xr[j] - c));
+      const fxe = f(xe);
+      if (fxe < fxr) {
+        simplex[n] = { x: xe, fx: fxe };
+      } else {
+        simplex[n] = { x: xr, fx: fxr };
+      }
+      continue;
+    }
+
+    // Contraction
+    const xc = centroid.map((c, j) => c + rho * (worst.x[j] - c));
+    const fxc = f(xc);
+    if (fxc < worst.fx) {
+      simplex[n] = { x: xc, fx: fxc };
+      continue;
+    }
+
+    // Shrink
+    for (let i = 1; i <= n; i++) {
+      simplex[i].x = simplex[i].x.map((x, j) => best.x[j] + sigma * (x - best.x[j]));
+      simplex[i].fx = f(simplex[i].x);
+    }
+  }
+
+  return simplex[0];
+}
+
+
+===== FILE: src/components/AssetInputPanel.tsx =====
+
+
+import React, { useState } from 'react';
+import { Asset } from '../utils/portfolioOptimizer';
+import { Plus, Trash2, Info, Download, Loader2, Zap } from 'lucide-react';
+
+interface AssetInputPanelProps {
+  assets: Asset[];
+  correlation: number;
+  onAssetsChange: (assets: Asset[]) => void;
+  onCorrelationChange: (corr: number) => void;
+}
+
+export default function AssetInputPanel({ assets, correlation, onAssetsChange, onCorrelationChange }: AssetInputPanelProps) {
+  const [newTicker, setNewTicker] = useState('');
+  const [newMu, setNewMu] = useState(0.10);
+  const [newSigma, setNewSigma] = useState(0.20);
+  const [newLambda, setNewLambda] = useState(0.5);
+  const [newJumpMean, setNewJumpMean] = useState(-0.1);
+  const [newJumpVol, setNewJumpVol] = useState(0.1);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const fetchAssetData = async () => {
+    if (!newTicker) return;
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/market-data?ticker=${newTicker}`);
+      if (!response.ok) throw new Error('Failed');
+      const data = await response.json();
+      setNewMu(parseFloat(data.mu.toFixed(4)));
+      setNewSigma(parseFloat(data.sigma.toFixed(4)));
+      if (data.lambda) setNewLambda(parseFloat(data.lambda.toFixed(4)));
+      if (data.jumpMean) setNewJumpMean(parseFloat(data.jumpMean.toFixed(4)));
+      if (data.jumpVol) setNewJumpVol(parseFloat(data.jumpVol.toFixed(4)));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const syncAllAssets = async () => {
+    setIsLoading(true);
+    try {
+      const updatedAssetsP = assets.map(async (a) => {
+        try {
+          const response = await fetch(`/api/market-data?ticker=${a.ticker}`);
+          if (!response.ok) return a;
+          const data = await response.json();
+          return {
+            ...a,
+            mu: parseFloat(data.mu.toFixed(4)),
+            sigma: parseFloat(data.sigma.toFixed(4)),
+            lambda: data.lambda ? parseFloat(data.lambda.toFixed(4)) : a.lambda,
+            jumpMean: data.jumpMean ? parseFloat(data.jumpMean.toFixed(4)) : a.jumpMean,
+            jumpVol: data.jumpVol ? parseFloat(data.jumpVol.toFixed(4)) : a.jumpVol
+          };
+        } catch (e) {
+          return a;
+        }
+      });
+      const updatedAssets = await Promise.all(updatedAssetsP);
+      onAssetsChange(updatedAssets);
+    } catch (e) {
+      console.error("Batch sync failed:", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const syncAllOptionsData = async () => {
+    setIsLoading(true);
+    try {
+      const updatedAssetsP = assets.map(async (a) => {
+        try {
+          const response = await fetch(`/api/options-data?ticker=${a.ticker}`);
+          if (!response.ok) return a;
+          const data = await response.json();
+          if (data.impliedLambda !== undefined) {
+            return {
+              ...a,
+              lambda: data.impliedLambda,
+              jumpMean: data.impliedJumpMean ?? a.jumpMean,
+              jumpVol: data.impliedJumpVol ?? a.jumpVol
+            };
+          }
+          return a;
+        } catch (e) {
+          return a;
+        }
+      });
+      const updatedAssets = await Promise.all(updatedAssetsP);
+      onAssetsChange(updatedAssets);
+    } catch (e) {
+      console.error("Batch options sync failed:", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const syncAssetOptionsData = async (asset: Asset) => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/options-data?ticker=${asset.ticker}`);
+      if (!response.ok) throw new Error('Failed to fetch options data');
+      const data = await response.json();
+
+      if (data.impliedLambda !== undefined) {
+        const updatedAssets = assets.map(a =>
+          a.id === asset.id
+            ? {
+              ...a,
+              lambda: data.impliedLambda,
+              jumpMean: data.impliedJumpMean ?? a.jumpMean,
+              jumpVol: data.impliedJumpVol ?? a.jumpVol
+            }
+            : a
+        );
+        onAssetsChange(updatedAssets);
+      }
+    } catch (e) {
+      console.error(e);
+      alert(`Could not extract valid Options Volatility Skew for ${asset.ticker}. It may not have an active derivatives market.`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const addAsset = () => {
+    if (!newTicker) return;
+    const newAsset: Asset = {
+      id: Math.random().toString(36).substr(2, 9),
+      ticker: newTicker.toUpperCase(),
+      mu: newMu,
+      sigma: newSigma,
+      lambda: newLambda,
+      jumpMean: newJumpMean,
+      jumpVol: newJumpVol
+    };
+    onAssetsChange([...assets, newAsset]);
+    setNewTicker('');
+    setNewMu(0.10);
+    setNewSigma(0.20);
+    setNewLambda(0.5);
+    setNewJumpMean(-0.1);
+    setNewJumpVol(0.1);
+  };
+
+  const removeAsset = (id: string) => {
+    onAssetsChange(assets.filter(a => a.id !== id));
+  };
+
+  const updateAsset = (id: string, field: keyof Asset, value: any) => {
+    onAssetsChange(assets.map(a => a.id === id ? { ...a, [field]: value } : a));
+  };
+
+  return (
+    <div className="bg-[#111] border-r border-gray-800 p-6 h-full overflow-y-auto w-80 flex-shrink-0">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-lg font-semibold text-white font-sans">Portfolio Assets</h2>
+        <div className="flex flex-col space-y-2">
+          <button
+            onClick={syncAllAssets}
+            disabled={isLoading || assets.length === 0}
+            className="bg-emerald-600/20 text-emerald-500 hover:bg-emerald-600/30 px-2 py-1 flex items-center justify-center space-x-1 rounded text-[10px] font-bold transition-colors disabled:opacity-50"
+            title="Refresh historical returns and volatility"
+          >
+            {isLoading ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+            <span>SYNC TBL</span>
+          </button>
+          <button
+            onClick={syncAllOptionsData}
+            disabled={isLoading || assets.length === 0}
+            className="bg-orange-600/20 text-orange-500 hover:bg-orange-600/30 px-2 py-1 flex items-center justify-center space-x-1 rounded text-[10px] font-bold transition-colors disabled:opacity-50"
+            title="Batch Extract Forward-Looking Crash Probabilities (λ)"
+          >
+            {isLoading ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+            <span>SYNC JUMPS</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-4 p-3 bg-blue-900/10 border border-blue-900/30 rounded text-xs text-blue-200/80">
+        <p className="mb-2"><strong>How this works:</strong></p>
+        <p>1. Define individual assets (Return/Vol/Jumps) to optimize the <em>relative</em> portfolio weights.</p>
+        <p>2. The model aggregates these parameters to determine the total optimal allocation size.</p>
+      </div>
+
+      {/* Asset List */}
+      <div className="space-y-4 mb-6">
+        {assets.map((asset) => (
+          <div key={asset.id} className="bg-[#1A1A1A] border border-gray-800 rounded p-3 relative group">
+            <button
+              onClick={() => removeAsset(asset.id)}
+              className="absolute top-2 right-2 text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <Trash2 size={14} />
+            </button>
+            <div className="flex items-center justify-between mb-2">
+              <input
+                type="text"
+                value={asset.ticker}
+                onChange={(e) => updateAsset(asset.id, 'ticker', e.target.value.toUpperCase())}
+                className="bg-transparent text-sm font-bold text-white w-20 focus:outline-none border-b border-transparent focus:border-gray-600"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase block mb-1">Return (μ)</label>
+                <input
+                  type="number"
+                  value={asset.mu}
+                  onChange={(e) => updateAsset(asset.id, 'mu', parseFloat(e.target.value))}
+                  step="0.01"
+                  className="w-full bg-[#111] border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:border-emerald-500 focus:outline-none font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase block mb-1">Vol (σ)</label>
+                <input
+                  type="number"
+                  value={asset.sigma}
+                  onChange={(e) => updateAsset(asset.id, 'sigma', parseFloat(e.target.value))}
+                  step="0.01"
+                  className="w-full bg-[#111] border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:border-red-500 focus:outline-none font-mono"
+                />
+              </div>
+            </div>
+            {/* Jump Params Row */}
+            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-800/50">
+              <div>
+                <label className="text-[9px] text-gray-600 uppercase block mb-1">λ</label>
+                <input
+                  type="number"
+                  value={asset.lambda || 0.5}
+                  onChange={(e) => updateAsset(asset.id, 'lambda', parseFloat(e.target.value))}
+                  step="0.1"
+                  className="w-full bg-[#111] border border-gray-800 rounded px-1 py-1 text-[10px] text-gray-400 focus:border-orange-500 focus:outline-none font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-[9px] text-gray-600 uppercase block mb-1">μ_J</label>
+                <input
+                  type="number"
+                  value={asset.jumpMean || -0.1}
+                  onChange={(e) => updateAsset(asset.id, 'jumpMean', parseFloat(e.target.value))}
+                  step="0.01"
+                  className="w-full bg-[#111] border border-gray-800 rounded px-1 py-1 text-[10px] text-gray-400 focus:border-orange-500 focus:outline-none font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-[9px] text-gray-600 uppercase block mb-1">σ_J</label>
+                <input
+                  type="number"
+                  value={asset.jumpVol || 0.1}
+                  onChange={(e) => updateAsset(asset.id, 'jumpVol', parseFloat(e.target.value))}
+                  step="0.01"
+                  className="w-full bg-[#111] border border-gray-800 rounded px-1 py-1 text-[10px] text-gray-400 focus:border-orange-500 focus:outline-none font-mono"
+                />
+              </div>
+            </div>
+            {/* Options Skew Sync Row */}
+            <div className="mt-2 pt-2 border-t border-gray-800/50 flex justify-end">
+              <button
+                onClick={() => syncAssetOptionsData(asset)}
+                disabled={isLoading}
+                className="bg-orange-600/20 text-orange-500 hover:bg-orange-600/30 px-2 py-1 flex items-center space-x-1 rounded text-[9px] font-bold transition-colors disabled:opacity-50"
+                title="Extract Forward-Looking Crash Probability (λ) from Live Options Volatility Skew"
+              >
+                {isLoading ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+                <span>RIP OPTIONS SKEW</span>
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Add Asset Form */}
+      <div className="bg-[#1A1A1A] border border-dashed border-gray-700 rounded p-3">
+        <div className="flex items-center space-x-2 mb-2">
+          <input
+            type="text"
+            placeholder="TICKER"
+            value={newTicker}
+            onChange={(e) => setNewTicker(e.target.value)}
+            className="flex-1 bg-[#111] border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none font-mono uppercase placeholder-gray-600"
+          />
+          <button
+            onClick={fetchAssetData}
+            disabled={isLoading || !newTicker}
+            className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white p-1.5 rounded transition-colors"
+            title="Fetch Data"
+          >
+            {isLoading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <input
+            type="number"
+            placeholder="μ (0.10)"
+            value={newMu}
+            onChange={(e) => setNewMu(parseFloat(e.target.value))}
+            step="0.01"
+            className="bg-[#111] border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none font-mono placeholder-gray-600"
+          />
+          <input
+            type="number"
+            placeholder="σ (0.20)"
+            value={newSigma}
+            onChange={(e) => setNewSigma(parseFloat(e.target.value))}
+            step="0.01"
+            className="bg-[#111] border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none font-mono placeholder-gray-600"
+          />
+        </div>
+        <button
+          onClick={addAsset}
+          disabled={!newTicker}
+          className="w-full flex items-center justify-center space-x-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium py-1.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Plus size={12} />
+          <span>ADD ASSET</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+===== FILE: src/components/ConvictionCard.tsx =====
+
+import React from 'react';
+import { CheckCircle, AlertTriangle, XCircle, TrendingUp, ShieldCheck } from 'lucide-react';
+
+interface ConvictionCardProps {
+  decision: 'STRONG GO' | 'SCALED GO' | 'NO-GO' | null;
+  reason: string;
+  portfolioGrowth: number;
+  spyGrowth: number | null;
+  riskFree: number;
+  alpha: number | null;
+  beta: number | null;
+}
+
+const ConvictionCard: React.FC<ConvictionCardProps> = ({ decision, reason, portfolioGrowth, spyGrowth, riskFree, alpha, beta }) => {
+  if (!decision) return null;
+
+  const getStyle = () => {
+    switch (decision) {
+      case 'STRONG GO':
+        return {
+          bg: 'bg-emerald-500/10',
+          border: 'border-emerald-500/30',
+          text: 'text-emerald-400',
+          icon: <CheckCircle className="w-8 h-8 text-emerald-500" />
+        };
+      case 'SCALED GO':
+        return {
+          bg: 'bg-yellow-500/10',
+          border: 'border-yellow-500/30',
+          text: 'text-yellow-400',
+          icon: <ShieldCheck className="w-8 h-8 text-yellow-500" />
+        };
+      case 'NO-GO':
+        return {
+          bg: 'bg-red-500/10',
+          border: 'border-red-500/30',
+          text: 'text-red-400',
+          icon: <XCircle className="w-8 h-8 text-red-500" />
+        };
+    }
+  };
+
+  const style = getStyle();
+
+  return (
+    <div className={`mt-6 p-6 rounded-xl border ${style.border} ${style.bg} backdrop-blur-sm`}>
+      <div className="flex items-start space-x-4">
+        <div className="flex-shrink-0 mt-1">
+          {style.icon}
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className={`text-xl font-bold tracking-tight ${style.text}`}>
+              VERDICT: {decision}
+            </h3>
+            <div className="flex items-center space-x-4 text-xs font-mono text-gray-400">
+              <div className="flex items-center space-x-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span>PORTFOLIO: {(portfolioGrowth * 100).toFixed(2)}%</span>
+              </div>
+              {spyGrowth !== null && (
+                <div className="flex items-center space-x-1">
+                  <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                  <span>SPY: {(spyGrowth * 100).toFixed(2)}%</span>
+                </div>
+              )}
+              <div className="flex items-center space-x-1">
+                <span className="w-2 h-2 rounded-full bg-gray-500"></span>
+                <span>CASH: {(riskFree * 100).toFixed(2)}%</span>
+              </div>
+            </div>
+          </div>
+          
+          <p className="text-gray-300 leading-relaxed mb-4">
+            {reason}
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
+            <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+              <div className="text-gray-500 mb-1 uppercase tracking-wider font-semibold">Alpha (α)</div>
+              <div className={`font-mono ${alpha !== null && alpha > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {alpha !== null ? `${(alpha * 100).toFixed(2)}%` : 'N/A'}
+              </div>
+            </div>
+            <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+              <div className="text-gray-500 mb-1 uppercase tracking-wider font-semibold">Beta (β)</div>
+              <div className="text-gray-200 font-mono">
+                {beta !== null ? beta.toFixed(2) : 'N/A'}
+              </div>
+            </div>
+            <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+              <div className="text-gray-500 mb-1 uppercase tracking-wider font-semibold">Excess Return</div>
+              <div className={`font-mono ${portfolioGrowth > (spyGrowth || 0) ? 'text-emerald-400' : 'text-red-400'}`}>
+                {spyGrowth ? `${((portfolioGrowth - spyGrowth) * 100).toFixed(2)}% vs SPY` : 'N/A'}
+              </div>
+            </div>
+            <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+              <div className="text-gray-500 mb-1 uppercase tracking-wider font-semibold">Risk-Adj. Status</div>
+              <div className="text-gray-200 font-mono">
+                {decision === 'STRONG GO' ? 'Optimal Edge' : decision === 'SCALED GO' ? 'Leveraged Beta' : 'Inefficient'}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ConvictionCard;
+
+
+===== FILE: src/components/InputPanel.tsx =====
+
+
+import React, { useState, useEffect } from 'react';
+import { ModelParams } from '../utils/poissonKelly';
+import { Info, Download, Loader2 } from 'lucide-react';
+
+interface InputPanelProps {
+  params: ModelParams;
+  onChange: (newParams: ModelParams) => void;
+}
+
+const NumberInput = ({ 
+  label, 
+  value, 
+  onChange, 
+  step = "0.01", 
+  tooltip 
+}: { 
+  label: string, 
+  value: number, 
+  onChange: (val: number) => void, 
+  step?: string, 
+  tooltip?: string 
+}) => {
+  const [localValue, setLocalValue] = useState(value.toString());
+  const [isFocused, setIsFocused] = useState(false);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setLocalValue(value.toString());
+    }
+  }, [value, isFocused]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVal = e.target.value;
+    setLocalValue(newVal);
+    
+    const parsed = parseFloat(newVal);
+    if (!isNaN(parsed)) {
+      onChange(parsed);
+    }
+  };
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">{label}</label>
+        {tooltip && (
+          <div className="group relative cursor-help">
+            <Info size={12} className="text-gray-500" />
+            <div className="absolute right-0 bottom-full mb-2 w-48 p-2 bg-gray-800 text-xs text-gray-300 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+              {tooltip}
+            </div>
+          </div>
+        )}
+      </div>
+      <input
+        type="number"
+        value={localValue}
+        onChange={handleChange}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        step={step}
+        className="w-full bg-[#1A1A1A] border border-gray-700 rounded p-2 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none font-mono transition-colors"
+      />
+    </div>
+  );
+};
+
+export default function InputPanel({ params, onChange }: InputPanelProps) {
+  const [ticker, setTicker] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const updateParam = (name: keyof ModelParams, value: number) => {
+    onChange({
+      ...params,
+      [name]: value,
+    });
+  };
+
+  const fetchMarketData = async () => {
+    if (!ticker) return;
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/market-data?ticker=${ticker}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch data');
+      }
+      const data = await response.json();
+      
+      onChange({
+        ...params,
+        mu: data.mu,
+        sigma: data.sigma,
+        lambda: data.lambda,
+        jumpMean: data.jumpMean,
+        jumpVol: data.jumpVol,
+        riskFree: data.riskFree
+      });
+    } catch (err) {
+      setError('Failed to load market data. Please check the ticker.');
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-[#111] border-r border-gray-800 p-6 h-full overflow-y-auto w-80 flex-shrink-0">
+      <h2 className="text-lg font-semibold text-white mb-6 font-sans">Model Inputs</h2>
+      
+      {/* Live Data Fetcher */}
+      <div className="mb-6 p-4 bg-[#1A1A1A] border border-gray-700 rounded-lg">
+        <label className="text-xs font-medium text-emerald-500 uppercase tracking-wider mb-2 block">Load Live Data</label>
+        <div className="flex space-x-2">
+          <input
+            type="text"
+            placeholder="TICKER (e.g. SPY)"
+            value={ticker}
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            className="flex-1 bg-[#0A0A0A] border border-gray-700 rounded px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none font-mono uppercase"
+          />
+          <button
+            onClick={fetchMarketData}
+            disabled={isLoading || !ticker}
+            className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white p-2 rounded transition-colors"
+          >
+            {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+          </button>
+        </div>
+        {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+      </div>
+
+      <div className="space-y-6">
+        <div>
+          <h3 className="text-emerald-500 text-xs font-bold uppercase mb-3 border-b border-emerald-500/20 pb-1">Market Parameters</h3>
+          <NumberInput 
+            label="Exp. Annual Return (μ)" 
+            value={params.mu}
+            onChange={(v) => updateParam('mu', v)}
+            tooltip="Total expected annual return including jumps."
+          />
+          <NumberInput 
+            label="Annual Volatility (σ)" 
+            value={params.sigma}
+            onChange={(v) => updateParam('sigma', v)}
+            tooltip="Standard deviation of the diffusion component."
+          />
+          <NumberInput 
+            label="Risk-Free Rate (r)" 
+            value={params.riskFree}
+            onChange={(v) => updateParam('riskFree', v)}
+            tooltip="Annual risk-free interest rate."
+          />
+        </div>
+
+        <div>
+          <h3 className="text-orange-500 text-xs font-bold uppercase mb-3 border-b border-orange-500/20 pb-1">Jump Parameters</h3>
+          <NumberInput 
+            label="Jump Intensity (λ)" 
+            value={params.lambda}
+            onChange={(v) => updateParam('lambda', v)}
+            step="0.1"
+            tooltip="Average number of jump events per year."
+          />
+          <NumberInput 
+            label="Jump Mean (μ_J)" 
+            value={params.jumpMean}
+            onChange={(v) => updateParam('jumpMean', v)}
+            tooltip="Mean of the log-jump size. e.g. -0.1 is approx -10%."
+          />
+          <NumberInput 
+            label="Jump Volatility (σ_J)" 
+            value={params.jumpVol}
+            onChange={(v) => updateParam('jumpVol', v)}
+            tooltip="Standard deviation of the jump size."
+          />
+        </div>
+
+        <div>
+          <h3 className="text-blue-500 text-xs font-bold uppercase mb-3 border-b border-blue-500/20 pb-1">Portfolio Settings</h3>
+          <NumberInput 
+            label="Initial Wealth" 
+            value={params.initialWealth}
+            onChange={(v) => updateParam('initialWealth', v)}
+            step="1000"
+          />
+          <NumberInput 
+            label="Horizon (Years)" 
+            value={params.horizon}
+            onChange={(v) => updateParam('horizon', v)}
+            step="0.5"
+          />
+          <NumberInput 
+            label="Simulations" 
+            value={params.simulations}
+            onChange={(v) => updateParam('simulations', v)}
+            step="10"
+          />
+          <NumberInput 
+            label="Max Leverage (Cap)" 
+            value={params.maxLeverage}
+            onChange={(v) => updateParam('maxLeverage', v)}
+            step="0.1"
+            tooltip="Maximum allowed leverage. Set to 1.0 for cash-only (no margin)."
+          />
+          {/* NEW SLIDER: CONCENTRATION LIMIT */}
+          <NumberInput 
+            label="Max Position Size (Cap)" 
+            value={params.maxAssetWeight * 100}
+            onChange={(v) => updateParam('maxAssetWeight', v / 100)}
+            step="5"
+            tooltip="Max % of the equity portfolio a single stock can occupy (e.g., 30 for 30%). Prevents overconcentration."
+          />
+        </div>
+
+        <div>
+          <h3 className="text-red-500 text-xs font-bold uppercase mb-3 border-b border-red-500/20 pb-1">Risk Management</h3>
+          
+          <div className="mb-4">
+            <label className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1 block">Kelly Fraction</label>
+            <select
+              value={params.kellyFraction}
+              onChange={(e) => updateParam('kellyFraction', parseFloat(e.target.value))}
+              className="w-full bg-[#1A1A1A] border border-gray-700 rounded p-2 text-sm text-gray-200 focus:border-red-500 focus:outline-none font-mono transition-colors"
+            >
+              <option value={1.0}>Full Kelly (1.0x)</option>
+              <option value={0.5}>Half Kelly (0.5x)</option>
+              <option value={0.25}>Quarter Kelly (0.25x)</option>
+              <option value={0.75}>Three-Quarter Kelly (0.75x)</option>
+            </select>
+          </div>
+
+          <NumberInput 
+            label="Friction Cost (Annual %)" 
+            value={params.frictionCost * 100}
+            onChange={(v) => updateParam('frictionCost', v / 100)}
+            step="0.01"
+            tooltip="Estimated annual drag from spreads and fees."
+          />
+          
+          <NumberInput 
+            label="Max Drawdown Limit (%)" 
+            value={params.maxDrawdown * 100}
+            onChange={(v) => updateParam('maxDrawdown', v / 100)}
+            step="1"
+            tooltip="Maximum acceptable drawdown (CVaR 95%). Model will reduce leverage if breached."
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+===== FILE: src/components/KellyCurveChart.tsx =====
+
+
+import React from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { SimulationResult } from '../utils/poissonKelly';
+
+interface KellyCurveChartProps {
+  result: SimulationResult;
+}
+
+export default function KellyCurveChart({ result }: KellyCurveChartProps) {
+  const { kellyCurve, optimalFraction } = result;
+
+  return (
+    <div className="bg-[#1A1A1A] border border-gray-800 rounded-lg p-4 h-96 flex flex-col">
+      <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4">Kelly Curve (Growth vs Leverage)</h3>
+      <div className="flex-1 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={kellyCurve} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+            <XAxis
+              dataKey="leverage"
+              type="number"
+              domain={[0, 'dataMax']}
+              tick={{ fill: '#666', fontSize: 12 }}
+              tickFormatter={(val) => `${val.toFixed(1)}x`}
+              axisLine={{ stroke: '#333' }}
+              label={{ value: 'Leverage', position: 'insideBottom', offset: -5, fill: '#666', fontSize: 12 }}
+            />
+            <YAxis
+              domain={[-1.0, 'auto']}
+              tick={{ fill: '#666', fontSize: 12 }}
+              axisLine={{ stroke: '#333' }}
+              tickFormatter={(val) => `${(val * 100).toFixed(0)}%`}
+              label={{ value: 'Growth Rate', angle: -90, position: 'insideLeft', fill: '#666', fontSize: 12 }}
+            />
+            <Tooltip
+              contentStyle={{ backgroundColor: '#111', borderColor: '#333', color: '#fff' }}
+              itemStyle={{ color: '#888' }}
+              labelStyle={{ color: '#666' }}
+              formatter={(value: number) => [`${(value * 100).toFixed(2)}%`, 'Growth Rate']}
+              labelFormatter={(label) => `Leverage: ${Number(label).toFixed(2)}x`}
+            />
+            <ReferenceLine x={optimalFraction} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Optimal f*', position: 'top', fill: '#10b981', fontSize: 12 }} />
+            <Line
+              type="monotone"
+              dataKey="growth"
+              stroke="#3b82f6"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 6, fill: '#3b82f6' }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+
+===== FILE: src/components/MacroInputPanel.tsx =====
+
+
+import React, { useState, useEffect } from 'react';
+import { MacroParams } from '../utils/macroEconomics';
+import { Info, AlertTriangle } from 'lucide-react';
+
+interface MacroInputPanelProps {
+  params: MacroParams;
+  onChange: (newParams: MacroParams) => void;
+}
+
+const NumberInput = ({
+  label,
+  value,
+  onChange,
+  step = "0.1",
+  tooltip
+}: {
+  label: string,
+  value: number,
+  onChange: (val: number) => void,
+  step?: string,
+  tooltip?: string
+}) => {
+  const [localValue, setLocalValue] = useState(value.toString());
+  const [isFocused, setIsFocused] = useState(false);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setLocalValue(value.toString());
+    }
+  }, [value, isFocused]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVal = e.target.value;
+    setLocalValue(newVal);
+
+    const parsed = parseFloat(newVal);
+    if (!isNaN(parsed)) {
+      onChange(parsed);
+    }
+  };
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">{label}</label>
+        {tooltip && (
+          <div className="group relative cursor-help">
+            <Info size={12} className="text-gray-500" />
+            <div className="absolute right-0 bottom-full mb-2 w-48 p-2 bg-gray-800 text-xs text-gray-300 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+              {tooltip}
+            </div>
+          </div>
+        )}
+      </div>
+      <input
+        type="number"
+        value={localValue}
+        onChange={handleChange}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        step={step}
+        className="w-full bg-[#1A1A1A] border border-gray-700 rounded p-2 text-sm text-gray-200 focus:border-purple-500 focus:outline-none font-mono transition-colors"
+      />
+    </div>
+  );
+};
+
+export default function MacroInputPanel({ params, onChange }: MacroInputPanelProps) {
+  const updateParam = (name: keyof MacroParams, value: number | boolean) => {
+    onChange({
+      ...params,
+      [name]: value,
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-purple-500 text-xs font-bold uppercase mb-3 border-b border-purple-500/20 pb-1">Macro Indicators</h3>
+        <NumberInput
+          label="CPI (Inflation %)"
+          value={params.cpi}
+          onChange={(v) => updateParam('cpi', v)}
+          tooltip="Consumer Price Index (Year-over-Year). High inflation increases volatility."
+        />
+        <NumberInput
+          label="Fed Funds Rate (%)"
+          value={params.fedFundsRate}
+          onChange={(v) => updateParam('fedFundsRate', v)}
+          tooltip="Federal Reserve Interest Rate. Directly impacts the risk-free rate."
+        />
+        <NumberInput
+          label="GDP Growth (%)"
+          value={params.gdpGrowth}
+          onChange={(v) => updateParam('gdpGrowth', v)}
+          tooltip="Gross Domestic Product Growth Rate. Correlates with expected returns."
+        />
+        <NumberInput
+          label="Unemployment Rate (%)"
+          value={params.unemployment}
+          onChange={(v) => updateParam('unemployment', v)}
+          tooltip="Unemployment Rate. High unemployment signals recession risk (higher jump intensity)."
+        />
+
+        <div className="mt-8 pt-6 border-t border-purple-900/40">
+          <div className="flex items-start justify-between">
+            <div className="flex flex-col">
+              <span className="text-xs font-bold text-red-500 uppercase flex items-center gap-1.5">
+                <AlertTriangle size={14} /> Market Stress Test
+              </span>
+              <span className="text-[10px] text-gray-500 mt-1 max-w-[200px] leading-tight flex-wrap">
+                Simulates panic conditions where diversification fails and all cross-asset correlations spike above 0.85
+              </span>
+            </div>
+
+            <button
+              onClick={() => updateParam('isStressTest', !params.isStressTest)}
+              className={`relative inline-flex h-5 w-10 mt-1 items-center rounded-full transition-colors focus:outline-none ${params.isStressTest ? 'bg-red-500' : 'bg-gray-700'}`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${params.isStressTest ? 'translate-x-5' : 'translate-x-1'}`}
+              />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+===== FILE: src/components/SimulationChart.tsx =====
+
+
+import React, { useMemo } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { SimulationResult } from '../utils/poissonKelly';
+
+interface SimulationChartProps {
+  result: SimulationResult;
+}
+
+export default function SimulationChart({ result }: SimulationChartProps) {
+  const { paths } = result;
+
+  const chartData = useMemo(() => {
+    if (!paths || paths.length === 0) return [];
+
+    const timeSteps = paths[0].length;
+
+    const data = [];
+    for (let i = 0; i < timeSteps; i++) {
+      const point: any = { time: paths[0][i].time };
+
+      // Extract out all wealths at exactly this timestep
+      const valuesAtTime = paths.map(p => p[i].value).sort((a, b) => a - b);
+
+      const p5 = valuesAtTime[Math.floor(valuesAtTime.length * 0.05)];
+      const median = valuesAtTime[Math.floor(valuesAtTime.length * 0.50)];
+      const p95 = valuesAtTime[Math.floor(valuesAtTime.length * 0.95)];
+
+      // Force a tiny lower bound to prevent Log Scale from exploding on 0
+      point.p5 = Math.max(1, p5);
+      point.median = Math.max(1, median);
+      point.p95 = Math.max(1, p95);
+
+      // Recharts Area can take an array [bottom, top] to organically shade the area between curves!
+      point.confidenceInterval = [point.p5, point.p95];
+
+      data.push(point);
+    }
+    return data;
+  }, [paths]);
+
+  return (
+    <div className="bg-[#1A1A1A] border border-gray-800 rounded-lg p-4 h-96 flex flex-col">
+      <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4">Monte Carlo Wealth Propagation (90% CI)</h3>
+      <div className="flex-1 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+            <XAxis
+              dataKey="time"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              tick={{ fill: '#666', fontSize: 12 }}
+              tickFormatter={(val) => `${val.toFixed(1)}y`}
+              axisLine={{ stroke: '#333' }}
+            />
+            <YAxis
+              scale="log"
+              domain={['auto', 'auto']}
+              tick={{ fill: '#666', fontSize: 12 }}
+              axisLine={{ stroke: '#333' }}
+              tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val}
+            />
+            <Tooltip
+              contentStyle={{ backgroundColor: '#111', borderColor: '#333', color: '#fff' }}
+              itemStyle={{ color: '#888' }}
+              labelStyle={{ color: '#666' }}
+              formatter={(value: any, name: string) => {
+                if (Array.isArray(value)) return [`$${value[0].toFixed(0)} - $${value[1].toFixed(0)}`, '90% Variance'];
+                return [`$${Number(value).toFixed(0)}`, 'Median (Base)'];
+              }}
+              labelFormatter={(label) => `Time: ${Number(label).toFixed(2)}y`}
+            />
+
+            <Line
+              type="monotone"
+              name="95th Bull Case"
+              dataKey="p95"
+              stroke="#10b981"
+              strokeWidth={1}
+              strokeDasharray="4 4"
+              dot={false}
+              isAnimationActive={false}
+            />
+            <Line
+              type="monotone"
+              name="5th Bear Case"
+              dataKey="p5"
+              stroke="#ef4444"
+              strokeWidth={1}
+              strokeDasharray="4 4"
+              dot={false}
+              isAnimationActive={false}
+            />
+            <Line
+              type="monotone"
+              name="Median Path"
+              dataKey="median"
+              stroke="#3b82f6"
+              strokeWidth={3}
+              dot={false}
+              isAnimationActive={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+
+===== FILE: src/components/SummaryMetrics.tsx =====
+
+
+import React from 'react';
+import { SimulationResult } from '../utils/poissonKelly';
+import { Asset } from '../utils/portfolioOptimizer';
+import { TrendingUp, Clock, AlertTriangle, Percent, Combine } from 'lucide-react';
+
+interface SummaryMetricsProps {
+  result: SimulationResult;
+  initialWealth: number;
+  covarianceMatrix?: number[][] | null;
+  assets?: Asset[];
+}
+
+export default function SummaryMetrics({ result, initialWealth, covarianceMatrix, assets }: SummaryMetricsProps) {
+  const { optimalFraction, maxGrowthRate, finalWealths } = result;
+
+  // Calculate doubling time: ln(2) / g
+  const doublingTime = maxGrowthRate > 0 ? Math.log(2) / maxGrowthRate : Infinity;
+
+  // Calculate ruin probability (wealth < 20% of initial, i.e., 80% drawdown)
+  const ruinThreshold = initialWealth * 0.20;
+  const ruinCount = finalWealths.filter(w => w < ruinThreshold).length;
+  const ruinProb = (ruinCount / finalWealths.length) * 100;
+
+  const MetricCard = ({ label, value, subtext, icon: Icon, color }: any) => (
+    <div className="bg-[#1A1A1A] border border-gray-800 p-4 rounded-lg flex items-start space-x-4">
+      <div className={`p-2 rounded-md bg-opacity-10 ${color.bg} ${color.text}`}>
+        <Icon size={20} />
+      </div>
+      <div>
+        <p className="text-xs text-gray-500 uppercase tracking-wider font-medium">{label}</p>
+        <p className="text-2xl font-mono text-white mt-1">{value}</p>
+        <p className="text-xs text-gray-400 mt-1">{subtext}</p>
+      </div>
+    </div>
+  );
+
+  // Calculate true Correlation derived from Covariances for the Heatmap visualization
+  const getCorrelationColor = (val: number) => {
+    if (val >= 0.8) return 'bg-red-500/80 text-white'; // High stress/panic
+    if (val >= 0.5) return 'bg-orange-500/60 text-white'; // Moderate correlation
+    if (val >= 0.2) return 'bg-yellow-500/40 text-gray-200'; // Low correlation
+    if (val > -0.2) return 'bg-gray-800 text-gray-400'; // Neutral (uncorrelated)
+    return 'bg-emerald-500/60 text-white'; // Negative underlying correlation! (Holy Grail)
+  };
+
+  return (
+    <div className="space-y-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard
+          label="Optimal Leverage (f*)"
+          value={`${(optimalFraction * 100).toFixed(2)}%`}
+          subtext="Kelly Criterion"
+          icon={Percent}
+          color={{ bg: 'bg-emerald-500', text: 'text-emerald-500' }}
+        />
+        <MetricCard
+          label="Exp. Growth Rate (g*)"
+          value={`${(maxGrowthRate * 100).toFixed(2)}%`}
+          subtext="Continuous Compounding"
+          icon={TrendingUp}
+          color={{ bg: 'bg-blue-500', text: 'text-blue-500' }}
+        />
+        <MetricCard
+          label="Doubling Time"
+          value={doublingTime === Infinity ? "Never" : `${doublingTime.toFixed(1)} Yrs`}
+          subtext="Expected Time to 2x"
+          icon={Clock}
+          color={{ bg: 'bg-purple-500', text: 'text-purple-500' }}
+        />
+        <MetricCard
+          label="Drawdown Risk"
+          value={`${ruinProb.toFixed(1)}%`}
+          subtext="Prob. of Ruin (>80% Loss)"
+          icon={AlertTriangle}
+          color={{ bg: 'bg-red-500', text: 'text-red-500' }}
+        />
+      </div>
+
+      {/* Dynamic Correlation Heatmap Panel */}
+      {covarianceMatrix && assets && assets.length > 1 && (
+        <div className="bg-[#1A1A1A] border border-gray-800 rounded-lg p-6">
+          <div className="flex items-center space-x-2 mb-4">
+            <Combine size={18} className="text-gray-400" />
+            <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Historical Correlation Matrix (Trailing 5Yr)</h3>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-[11px] uppercase tracking-wider font-mono">
+              <thead>
+                <tr>
+                  <th className="p-2 text-left text-gray-500">Asset</th>
+                  {assets.map((a) => (
+                    <th key={a.id} className="p-2 text-center text-gray-300 w-16">{a.ticker}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {assets.map((rowAsset, i) => (
+                  <tr key={rowAsset.id} className="border-t border-gray-800/50">
+                    <td className="p-2 font-bold text-gray-300">{rowAsset.ticker}</td>
+                    {assets.map((colAsset, j) => {
+                      // Extract Corelation: Cor(x,y) = Cov(x,y) / (Std(x) * Std(y))
+                      const cov = covarianceMatrix[i][j];
+                      const stdI = Math.sqrt(covarianceMatrix[i][i]);
+                      const stdJ = Math.sqrt(covarianceMatrix[j][j]);
+                      const correlation = cov / (stdI * stdJ);
+
+                      return (
+                        <td key={`${rowAsset.id}-${colAsset.id}`} className="p-1">
+                          <div className={`w-full py-1.5 rounded flex items-center justify-center font-bold ${getCorrelationColor(correlation)}`}>
+                            {correlation.toFixed(2)}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
